@@ -1,0 +1,1191 @@
+"""GRIDTWIN Backend - Main FastAPI Application"""
+import uuid
+import asyncio
+import logging
+from datetime import datetime, timezone
+from contextlib import asynccontextmanager
+from typing import Optional
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Query
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func, desc, update
+
+from app.core.config import settings
+from app.db.database import get_db, init_db, async_session_factory
+from app.models.models import (
+    Project, NetworkVersion, Node, Edge, Component, ComponentParameter,
+    Switch, Load, SimulationSession, SimulationResult,
+    Device, OutputMapping, DeviceCommand, TelemetryRecord,
+    Alert, EventLog, AuditLog, AppSetting,
+    NodeType, EdgeType, ComponentType, SwitchState, SimulationStatus,
+    SimulationLevel, DeviceStatus, CommandStatus, OutputState,
+    AlertSeverity, AlertStatus, utcnow
+)
+from app.schemas.schemas import (
+    ProjectCreate, ProjectResponse, NodeCreate, NodeResponse,
+    EdgeCreate, EdgeResponse, ComponentCreate, ComponentResponse,
+    SwitchCreate, SwitchResponse, SwitchOperationRequest, SwitchOperationResponse,
+    LoadCreate, LoadResponse, SimulationStartRequest, SimulationSessionResponse,
+    SimulationResultResponse, DeviceRegister, DeviceResponse, DeviceEnableRequest,
+    OutputMappingCreate, OutputMappingResponse, PhysicalCommandRequest,
+    CommandResponse, CommandAcknowledgement, TelemetryIngest, TelemetryResponse,
+    AlertCreate, AlertResponse, EventLogResponse, DashboardSummary,
+    NetworkTopologyResponse, ConnectivityResult as ConnectivityResultSchema,
+    WSMessage
+)
+from app.simulation.engine import NetworkSimulator, create_default_five_section_network
+from app.websocket.manager import ws_manager
+from app.mqtt.service import mqtt_service
+
+# Configure logging
+logging.basicConfig(
+    level=getattr(logging, settings.backend_log_level),
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger("gridtwin")
+
+# Global simulation instance
+simulator = create_default_five_section_network()
+
+
+# ──────────────────────────────────────────────
+# Lifespan
+# ──────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application startup and shutdown."""
+    logger.info("GRIDTWIN Backend starting...")
+    
+    # Initialize database
+    try:
+        await init_db()
+        logger.info("Database initialized")
+    except Exception as e:
+        logger.warning(f"Database init (may need PostgreSQL running): {e}")
+    
+    # Seed default data
+    try:
+        await seed_default_data()
+    except Exception as e:
+        logger.warning(f"Seed data (may need PostgreSQL): {e}")
+    
+    # Connect MQTT
+    try:
+        mqtt_service.connect()
+        mqtt_service.set_ack_callback(handle_device_ack)
+        mqtt_service.set_availability_callback(handle_device_availability)
+        logger.info("MQTT service started")
+    except Exception as e:
+        logger.warning(f"MQTT connection (may need Mosquitto): {e}")
+    
+    yield
+    
+    # Shutdown
+    mqtt_service.disconnect()
+    logger.info("GRIDTWIN Backend stopped")
+
+
+# ──────────────────────────────────────────────
+# App instance
+# ──────────────────────────────────────────────
+
+app = FastAPI(
+    title="GRIDTWIN API",
+    description="3D Electricity Distribution Digital Twin Virtual Laboratory API",
+    version="1.0.0",
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ──────────────────────────────────────────────
+# Seed Data
+# ──────────────────────────────────────────────
+
+async def seed_default_data():
+    """Seed the database with the default five-section network."""
+    async with async_session_factory() as session:
+        # Check if project exists
+        result = await session.execute(select(Project).where(Project.name == "Default 5-Section Network"))
+        existing = result.scalar_one_or_none()
+        if existing:
+            return
+        
+        # Create project
+        project = Project(
+            name="Default 5-Section Network",
+            description="Educational five-section electricity distribution network with towers T1-T5"
+        )
+        session.add(project)
+        await session.flush()
+        
+        # Create network version
+        nv = NetworkVersion(
+            project_id=project.id,
+            version=1,
+            description="Initial five-section network",
+            is_current=True
+        )
+        session.add(nv)
+        await session.flush()
+        
+        # Seed nodes from simulator
+        for node_id, node in simulator.nodes.items():
+            db_node = Node(
+                network_version_id=nv.id,
+                node_id=node.node_id,
+                node_type=NodeType(node.node_type),
+                name=node.name,
+                pos_x=node.pos_x,
+                pos_y=node.pos_y,
+                pos_z=node.pos_z,
+                nominal_voltage_kv=node.nominal_voltage_kv,
+                is_energized=True,
+            )
+            session.add(db_node)
+        
+        # Seed edges
+        for edge_id, edge in simulator.edges.items():
+            db_edge = Edge(
+                network_version_id=nv.id,
+                edge_id=edge.edge_id,
+                edge_type=EdgeType(edge.edge_type),
+                name=edge.name,
+                from_node_id=edge.from_node_id,
+                to_node_id=edge.to_node_id,
+                length_km=edge.length_km,
+                resistance_ohm_per_km=edge.resistance_ohm_per_km,
+                reactance_ohm_per_km=edge.reactance_ohm_per_km,
+                max_current_a=edge.max_current_a,
+                is_active=True,
+            )
+            session.add(db_edge)
+        
+        # Seed towers as components
+        tower_positions = {
+            "T1": (-6, 5, 0), "T2": (0, 5, 0), "T3": (6, 5, 0),
+            "T4": (12, 5, 0), "T5": (18, 5, 0),
+        }
+        for tid, (px, py, pz) in tower_positions.items():
+            comp = Component(
+                network_version_id=nv.id,
+                component_id=tid,
+                component_type=ComponentType.TOWER,
+                name=f"Tower {tid}",
+                description=f"Distribution tower {tid}",
+                node_id=f"N_{tid}",
+                pos_x=px, pos_y=py, pos_z=pz,
+            )
+            session.add(comp)
+        
+        # Seed switches
+        for sw_id, sw in simulator.switches.items():
+            db_switch = Switch(
+                network_version_id=nv.id,
+                switch_id=sw.switch_id,
+                name=sw.name,
+                controlled_edge_id=sw.controlled_edge_id,
+                state=SwitchState(sw.state),
+                section_id=sw.section_id,
+            )
+            session.add(db_switch)
+        
+        # Seed loads
+        for ld_id, ld in simulator.loads.items():
+            db_load = Load(
+                network_version_id=nv.id,
+                load_id=ld.load_id,
+                name=ld.name,
+                connected_node_id=ld.connected_node_id,
+                demand_kw=ld.demand_kw,
+                power_factor=ld.power_factor,
+                is_connected=True,
+                is_energized=True,
+                section_id=ld.section_id,
+            )
+            session.add(db_load)
+        
+        # Seed default device (disabled)
+        device = Device(
+            device_id="esp32-gridtwin-001",
+            name="GRIDTWIN ESP32 Controller",
+            description="Primary ESP32 controller for physical indicator outputs",
+            device_type="ESP32",
+            status=DeviceStatus.OFFLINE,
+            is_registered=True,
+            is_enabled=False,
+        )
+        session.add(device)
+        await session.flush()
+        
+        # Seed output mappings (disabled by default)
+        default_pins = {"T1": 16, "T2": 17, "T3": 18, "T4": 19, "T5": 21}
+        for tid, pin in default_pins.items():
+            mapping = OutputMapping(
+                device_id=device.id,
+                output_id=tid,
+                gpio_pin=pin,
+                name=f"{tid} Indicator",
+                section_id=tid,
+                is_enabled=False,
+                is_allowlisted=False,
+                reported_state=OutputState.UNKNOWN,
+            )
+            session.add(mapping)
+        
+        # App settings
+        session.add(AppSetting(key="physical_control_enabled", value="false", description="Enable physical device control"))
+        session.add(AppSetting(key="simulation_level", value="CONNECTIVITY", description="Active simulation level"))
+        
+        await session.commit()
+        logger.info("Default network seeded successfully")
+
+
+# ──────────────────────────────────────────────
+# MQTT Callbacks
+# ──────────────────────────────────────────────
+
+def handle_device_ack(device_id: str, payload: dict):
+    """Handle device acknowledgement messages."""
+    asyncio.create_task(_process_device_ack(device_id, payload))
+
+def handle_device_availability(device_id: str, payload: dict):
+    """Handle device availability messages."""
+    asyncio.create_task(_process_device_availability(device_id, payload))
+
+async def _process_device_ack(device_id: str, payload: dict):
+    """Process a device acknowledgement."""
+    try:
+        command_id = payload.get("command_id")
+        success = payload.get("success", False)
+        reported_state = payload.get("reported_state", "UNKNOWN")
+        error_reason = payload.get("error_reason")
+        
+        async with async_session_factory() as session:
+            # Find the command
+            result = await session.execute(
+                select(DeviceCommand).where(DeviceCommand.command_id == command_id)
+            )
+            command = result.scalar_one_or_none()
+            
+            if command:
+                command.status = CommandStatus.ACKNOWLEDGED
+                command.ack_received_at = utcnow()
+                command.ack_success = success
+                command.ack_reported_state = OutputState(reported_state) if reported_state in ("ON", "OFF") else OutputState.UNKNOWN
+                command.ack_error_reason = error_reason
+                
+                # Update output mapping reported state
+                device_result = await session.execute(
+                    select(Device).where(Device.device_id == device_id)
+                )
+                device = device_result.scalar_one_or_none()
+                if device:
+                    mapping_result = await session.execute(
+                        select(OutputMapping).where(
+                            OutputMapping.device_id == device.id,
+                            OutputMapping.output_id == command.output_id
+                        )
+                    )
+                    mapping = mapping_result.scalar_one_or_none()
+                    if mapping and success:
+                        mapping.reported_state = OutputState(reported_state) if reported_state in ("ON", "OFF") else OutputState.UNKNOWN
+                        mapping.last_state_change_at = utcnow()
+                
+                # Log event
+                event = EventLog(
+                    event_type="COMMAND_ACK",
+                    source="mqtt",
+                    title=f"Command {command_id[:8]} acknowledged",
+                    description=f"Device {device_id}, output {command.output_id}: {'success' if success else 'failed'}. State: {reported_state}",
+                    device_id=device_id,
+                )
+                session.add(event)
+                await session.commit()
+        
+        # Broadcast to WebSocket clients
+        await ws_manager.broadcast("command_ack", {
+            "command_id": command_id,
+            "device_id": device_id,
+            "success": success,
+            "reported_state": reported_state,
+            "error_reason": error_reason,
+        })
+        
+    except Exception as e:
+        logger.error(f"Error processing ack: {e}")
+
+async def _process_device_availability(device_id: str, payload: dict):
+    """Process device availability change."""
+    try:
+        status = payload.get("status", "offline")
+        
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(Device).where(Device.device_id == device_id)
+            )
+            device = result.scalar_one_or_none()
+            
+            if device:
+                if status == "online":
+                    device.status = DeviceStatus.ONLINE
+                    device.last_seen_at = utcnow()
+                    device.last_heartbeat_at = utcnow()
+                else:
+                    device.status = DeviceStatus.OFFLINE
+                    # Mark all outputs as UNKNOWN when device goes offline
+                    mapping_result = await session.execute(
+                        select(OutputMapping).where(OutputMapping.device_id == device.id)
+                    )
+                    for mapping in mapping_result.scalars():
+                        mapping.reported_state = OutputState.UNKNOWN
+                
+                event = EventLog(
+                    event_type="DEVICE_AVAILABILITY",
+                    source="mqtt",
+                    title=f"Device {device_id} is now {status}",
+                    device_id=device_id,
+                )
+                session.add(event)
+                await session.commit()
+        
+        await ws_manager.broadcast("device_status", {
+            "device_id": device_id,
+            "status": status,
+        })
+    except Exception as e:
+        logger.error(f"Error processing availability: {e}")
+
+
+# ──────────────────────────────────────────────
+# Health Endpoints
+# ──────────────────────────────────────────────
+
+@app.get("/api/v1/health")
+async def health_check():
+    """Health check endpoint."""
+    return {
+        "status": "healthy",
+        "service": "gridtwin-backend",
+        "version": settings.app_version,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+@app.get("/api/v1/readiness")
+async def readiness_check():
+    """Readiness check including dependencies."""
+    db_ok = False
+    mqtt_ok = mqtt_service.is_connected
+    
+    try:
+        async with async_session_factory() as session:
+            await session.execute(select(func.count()).select_from(Project))
+            db_ok = True
+    except Exception:
+        pass
+    
+    return {
+        "ready": db_ok,
+        "database": "connected" if db_ok else "unavailable",
+        "mqtt": "connected" if mqtt_ok else "unavailable",
+        "websocket_clients": ws_manager.connection_count,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ──────────────────────────────────────────────
+# Dashboard
+# ──────────────────────────────────────────────
+
+@app.get("/api/v1/dashboard", response_model=DashboardSummary)
+async def get_dashboard():
+    """Get the main dashboard summary."""
+    # Run simulation for current state
+    connectivity = simulator.run_connectivity()
+    summary = simulator.get_network_summary()
+    
+    # Get DB data
+    device_count = 0
+    devices_online = 0
+    devices_offline = 0
+    active_alerts = 0
+    recent_cmds = []
+    recent_evts = []
+    last_comm = None
+    project_name = "Default 5-Section Network"
+    project_id = None
+    physical_enabled = settings.physical_control_enabled
+    
+    try:
+        async with async_session_factory() as session:
+            # Project
+            proj_result = await session.execute(select(Project).limit(1))
+            proj = proj_result.scalar_one_or_none()
+            if proj:
+                project_name = proj.name
+                project_id = str(proj.id)
+            
+            # Devices
+            dev_result = await session.execute(select(Device))
+            devices = dev_result.scalars().all()
+            device_count = len(devices)
+            for d in devices:
+                if d.status == DeviceStatus.ONLINE:
+                    devices_online += 1
+                else:
+                    devices_offline += 1
+                if d.last_seen_at:
+                    if not last_comm or d.last_seen_at > last_comm:
+                        last_comm = d.last_seen_at
+            
+            # Alerts
+            alert_result = await session.execute(
+                select(func.count()).select_from(Alert).where(Alert.status == AlertStatus.ACTIVE)
+            )
+            active_alerts = alert_result.scalar() or 0
+            
+            # Recent commands
+            cmd_result = await session.execute(
+                select(DeviceCommand).order_by(desc(DeviceCommand.created_at)).limit(5)
+            )
+            for cmd in cmd_result.scalars():
+                recent_cmds.append({
+                    "command_id": cmd.command_id[:8],
+                    "output_id": cmd.output_id,
+                    "requested_state": cmd.requested_state.value if cmd.requested_state else "UNKNOWN",
+                    "status": cmd.status.value if cmd.status else "UNKNOWN",
+                    "created_at": cmd.created_at.isoformat() if cmd.created_at else None,
+                })
+            
+            # Recent events
+            evt_result = await session.execute(
+                select(EventLog).order_by(desc(EventLog.created_at)).limit(5)
+            )
+            for evt in evt_result.scalars():
+                recent_evts.append({
+                    "event_type": evt.event_type,
+                    "title": evt.title,
+                    "source": evt.source,
+                    "created_at": evt.created_at.isoformat() if evt.created_at else None,
+                })
+            
+            # Physical control setting
+            setting_result = await session.execute(
+                select(AppSetting).where(AppSetting.key == "physical_control_enabled")
+            )
+            setting = setting_result.scalar_one_or_none()
+            if setting:
+                physical_enabled = setting.value == "true"
+                
+    except Exception as e:
+        logger.warning(f"Dashboard DB query error: {e}")
+    
+    # Determine simulation status
+    sim_status = "IDLE"
+    sim_level = "CONNECTIVITY"
+    
+    return DashboardSummary(
+        project_name=project_name,
+        project_id=project_id,
+        total_nodes=summary["total_nodes"],
+        total_edges=summary["total_edges"],
+        total_loads=summary["total_loads"],
+        total_switches=summary["total_switches"],
+        energized_nodes=summary["energized_nodes"],
+        de_energized_nodes=summary["de_energized_nodes"],
+        energized_loads=summary["energized_loads"],
+        de_energized_loads=summary["de_energized_loads"],
+        total_demand_kw=summary["total_demand_kw"],
+        served_demand_kw=summary["served_demand_kw"],
+        simulation_status=sim_status,
+        simulation_level=sim_level,
+        device_count=device_count,
+        devices_online=devices_online,
+        devices_offline=devices_offline,
+        physical_control_enabled=physical_enabled,
+        last_communication=last_comm,
+        active_alerts=active_alerts,
+        recent_commands=recent_cmds,
+        recent_events=recent_evts,
+    )
+
+
+# ──────────────────────────────────────────────
+# Network Topology
+# ──────────────────────────────────────────────
+
+@app.get("/api/v1/topology")
+async def get_topology():
+    """Get the full network topology for 3D rendering and simulation."""
+    nodes = []
+    for nid, node in simulator.nodes.items():
+        nodes.append({
+            "node_id": node.node_id,
+            "node_type": node.node_type,
+            "name": node.name,
+            "pos_x": node.pos_x,
+            "pos_y": node.pos_y,
+            "pos_z": node.pos_z,
+            "nominal_voltage_kv": node.nominal_voltage_kv,
+            "is_energized": node.is_energized,
+        })
+    
+    edges = []
+    for eid, edge in simulator.edges.items():
+        edges.append({
+            "edge_id": edge.edge_id,
+            "edge_type": edge.edge_type,
+            "name": edge.name,
+            "from_node_id": edge.from_node_id,
+            "to_node_id": edge.to_node_id,
+            "length_km": edge.length_km,
+            "resistance_ohm_per_km": edge.resistance_ohm_per_km,
+            "max_current_a": edge.max_current_a,
+            "is_active": edge.is_active,
+        })
+    
+    switches = []
+    for sid, sw in simulator.switches.items():
+        switches.append({
+            "switch_id": sw.switch_id,
+            "name": sw.name,
+            "controlled_edge_id": sw.controlled_edge_id,
+            "state": sw.state,
+            "section_id": sw.section_id,
+        })
+    
+    loads = []
+    for lid, ld in simulator.loads.items():
+        loads.append({
+            "load_id": ld.load_id,
+            "name": ld.name,
+            "connected_node_id": ld.connected_node_id,
+            "demand_kw": ld.demand_kw,
+            "power_factor": ld.power_factor,
+            "is_connected": ld.is_connected,
+            "is_energized": ld.is_energized,
+            "section_id": ld.section_id,
+        })
+    
+    # 3D component positions for towers
+    components = []
+    tower_data = {
+        "T1": {"pos_x": -12, "pos_z": 0},
+        "T2": {"pos_x": -6, "pos_z": 0},
+        "T3": {"pos_x": 0, "pos_z": 0},
+        "T4": {"pos_x": 6, "pos_z": 0},
+        "T5": {"pos_x": 12, "pos_z": 0},
+    }
+    for tid, pos in tower_data.items():
+        components.append({
+            "component_id": tid,
+            "component_type": "TOWER",
+            "name": f"Tower {tid}",
+            "node_id": f"N_{tid}",
+            "pos_x": pos["pos_x"],
+            "pos_y": 0,
+            "pos_z": pos["pos_z"],
+            "section_id": tid,
+        })
+    
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "switches": switches,
+        "loads": loads,
+        "components": components,
+    }
+
+@app.get("/api/v1/topology/validate")
+async def validate_topology():
+    """Validate the current network topology."""
+    errors = simulator.validate_topology()
+    return {
+        "valid": len(errors) == 0,
+        "errors": errors,
+        "node_count": len(simulator.nodes),
+        "edge_count": len(simulator.edges),
+        "switch_count": len(simulator.switches),
+        "load_count": len(simulator.loads),
+    }
+
+
+# ──────────────────────────────────────────────
+# Simulation
+# ──────────────────────────────────────────────
+
+@app.get("/api/v1/simulation/connectivity")
+async def run_connectivity_simulation():
+    """Run connectivity simulation and return results."""
+    result = simulator.run_connectivity()
+    return {
+        "energized_nodes": result.energized_nodes,
+        "de_energized_nodes": result.de_energized_nodes,
+        "energized_loads": result.energized_loads,
+        "de_energized_loads": result.de_energized_loads,
+        "switch_states": result.switch_states,
+        "paths": result.paths,
+        "total_demand_kw": result.total_demand_kw,
+        "served_demand_kw": result.served_demand_kw,
+        "unserved_demand_kw": result.unserved_demand_kw,
+        "disconnected_components": result.disconnected_components,
+        "affected_sections": result.affected_sections,
+    }
+
+@app.get("/api/v1/simulation/educational")
+async def run_educational_simulation():
+    """Run educational electrical calculations."""
+    result = simulator.run_educational_calculations()
+    return {
+        "node_voltages": result.node_voltages,
+        "edge_currents": result.edge_currents,
+        "edge_power_flows": result.edge_power_flows,
+        "edge_losses": result.edge_losses,
+        "edge_voltage_drops": result.edge_voltage_drops,
+        "total_losses_kw": result.total_losses_kw,
+        "total_generation_kw": result.total_generation_kw,
+        "total_load_kw": result.total_load_kw,
+        "assumptions": result.assumptions,
+        "warnings": result.warnings,
+        "equations_used": result.equations_used,
+    }
+
+@app.post("/api/v1/simulation/switch/{switch_id}")
+async def operate_simulated_switch(switch_id: str, request: SwitchOperationRequest):
+    """
+    Mode A: Simulated electrical switching.
+    Operate a modeled network switch and recalculate connectivity.
+    """
+    try:
+        result, message = simulator.operate_switch(switch_id, request.requested_state)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    # Log event
+    try:
+        async with async_session_factory() as session:
+            event = EventLog(
+                event_type="SWITCH_OPERATION",
+                source="simulation",
+                title=f"Switch {switch_id} set to {request.requested_state}",
+                description=message,
+                component_id=switch_id,
+            )
+            session.add(event)
+            await session.commit()
+    except Exception as e:
+        logger.warning(f"Event log error: {e}")
+    
+    # Broadcast to WebSocket clients
+    await ws_manager.broadcast("simulation_update", {
+        "switch_id": switch_id,
+        "new_state": request.requested_state,
+        "energized_nodes": result.energized_nodes,
+        "de_energized_nodes": result.de_energized_nodes,
+        "energized_loads": result.energized_loads,
+        "de_energized_loads": result.de_energized_loads,
+        "affected_sections": result.affected_sections,
+    })
+    
+    return {
+        "switch_id": switch_id,
+        "previous_state": "OPEN" if request.requested_state == "CLOSED" else "CLOSED",
+        "new_state": request.requested_state,
+        "message": message,
+        "energized_nodes": result.energized_nodes,
+        "de_energized_nodes": result.de_energized_nodes,
+        "energized_loads": result.energized_loads,
+        "de_energized_loads": result.de_energized_loads,
+        "served_demand_kw": result.served_demand_kw,
+        "unserved_demand_kw": result.unserved_demand_kw,
+        "total_demand_kw": result.total_demand_kw,
+        "affected_sections": result.affected_sections,
+        "disconnected_components": result.disconnected_components,
+        "paths": result.paths,
+    }
+
+@app.post("/api/v1/simulation/reset")
+async def reset_simulation():
+    """Reset all switches to CLOSED and recalculate."""
+    global simulator
+    simulator = create_default_five_section_network()
+    result = simulator.run_connectivity()
+    
+    await ws_manager.broadcast("simulation_reset", {
+        "energized_nodes": result.energized_nodes,
+        "de_energized_nodes": result.de_energized_nodes,
+    })
+    
+    return {"message": "Simulation reset. All switches closed.", "result": simulator.get_network_summary()}
+
+
+# ──────────────────────────────────────────────
+# Devices
+# ──────────────────────────────────────────────
+
+@app.get("/api/v1/devices")
+async def list_devices():
+    """List all registered devices."""
+    try:
+        async with async_session_factory() as session:
+            result = await session.execute(select(Device))
+            devices = result.scalars().all()
+            return [{
+                "id": str(d.id),
+                "device_id": d.device_id,
+                "name": d.name,
+                "description": d.description,
+                "device_type": d.device_type,
+                "firmware_version": d.firmware_version,
+                "status": d.status.value if d.status else "UNKNOWN",
+                "is_registered": d.is_registered,
+                "is_enabled": d.is_enabled,
+                "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None,
+                "last_heartbeat_at": d.last_heartbeat_at.isoformat() if d.last_heartbeat_at else None,
+            } for d in devices]
+    except Exception as e:
+        logger.warning(f"Device list error: {e}")
+        # Return default device info when DB is unavailable
+        return [{
+            "id": "default",
+            "device_id": "esp32-gridtwin-001",
+            "name": "GRIDTWIN ESP32 Controller",
+            "device_type": "ESP32",
+            "status": "OFFLINE",
+            "is_registered": True,
+            "is_enabled": False,
+            "last_seen_at": None,
+        }]
+
+@app.post("/api/v1/devices/register")
+async def register_device(request: DeviceRegister):
+    """Register a new device."""
+    try:
+        async with async_session_factory() as session:
+            device = Device(
+                device_id=request.device_id,
+                name=request.name,
+                description=request.description,
+                device_type=request.device_type,
+                is_registered=True,
+                is_enabled=False,
+                status=DeviceStatus.OFFLINE,
+            )
+            session.add(device)
+            await session.commit()
+            return {"message": f"Device {request.device_id} registered", "device_id": request.device_id}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/v1/devices/{device_id}/outputs")
+async def get_device_outputs(device_id: str):
+    """Get output mappings for a device."""
+    try:
+        async with async_session_factory() as session:
+            dev_result = await session.execute(
+                select(Device).where(Device.device_id == device_id)
+            )
+            device = dev_result.scalar_one_or_none()
+            if not device:
+                raise HTTPException(status_code=404, detail="Device not found")
+            
+            result = await session.execute(
+                select(OutputMapping).where(OutputMapping.device_id == device.id)
+            )
+            mappings = result.scalars().all()
+            return [{
+                "id": str(m.id),
+                "output_id": m.output_id,
+                "gpio_pin": m.gpio_pin,
+                "name": m.name,
+                "section_id": m.section_id,
+                "is_enabled": m.is_enabled,
+                "is_allowlisted": m.is_allowlisted,
+                "reported_state": m.reported_state.value if m.reported_state else "UNKNOWN",
+                "last_state_change_at": m.last_state_change_at.isoformat() if m.last_state_change_at else None,
+            } for m in mappings]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"Output mappings error: {e}")
+        # Return defaults when DB unavailable
+        default_outputs = []
+        for tid in ["T1", "T2", "T3", "T4", "T5"]:
+            default_outputs.append({
+                "output_id": tid,
+                "gpio_pin": {"T1": 16, "T2": 17, "T3": 18, "T4": 19, "T5": 21}[tid],
+                "name": f"{tid} Indicator",
+                "section_id": tid,
+                "is_enabled": False,
+                "is_allowlisted": False,
+                "reported_state": "UNKNOWN",
+                "last_state_change_at": None,
+            })
+        return default_outputs
+
+
+# ──────────────────────────────────────────────
+# Physical Commands (Mode B)
+# ──────────────────────────────────────────────
+
+@app.post("/api/v1/commands/physical")
+async def send_physical_command(request: PhysicalCommandRequest):
+    """
+    Mode B: Physical low-voltage indicator control.
+    Sends a command to the ESP32 via MQTT.
+    Requires hardware mode to be enabled and the output to be allowlisted.
+    """
+    # Check if physical control is enabled
+    physical_enabled = settings.physical_control_enabled
+    try:
+        async with async_session_factory() as session:
+            setting = await session.execute(
+                select(AppSetting).where(AppSetting.key == "physical_control_enabled")
+            )
+            s = setting.scalar_one_or_none()
+            if s:
+                physical_enabled = s.value == "true"
+    except Exception:
+        pass
+    
+    if not physical_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Physical control is disabled. Enable it in Device Management before sending commands."
+        )
+    
+    # Check MQTT connection
+    if not mqtt_service.is_connected:
+        raise HTTPException(
+            status_code=503,
+            detail="MQTT broker not connected. Cannot send physical commands."
+        )
+    
+    # Validate device and output
+    try:
+        async with async_session_factory() as session:
+            dev_result = await session.execute(
+                select(Device).where(Device.device_id == request.device_id)
+            )
+            device = dev_result.scalar_one_or_none()
+            
+            if not device:
+                raise HTTPException(status_code=404, detail="Device not registered")
+            if not device.is_enabled:
+                raise HTTPException(status_code=403, detail="Device is not enabled")
+            if device.status != DeviceStatus.ONLINE:
+                raise HTTPException(status_code=409, detail="Device is offline")
+            
+            # Check output mapping
+            map_result = await session.execute(
+                select(OutputMapping).where(
+                    OutputMapping.device_id == device.id,
+                    OutputMapping.output_id == request.output_id
+                )
+            )
+            mapping = map_result.scalar_one_or_none()
+            
+            if not mapping:
+                raise HTTPException(status_code=404, detail="Output mapping not found")
+            if not mapping.is_allowlisted:
+                raise HTTPException(status_code=403, detail="Output is not allowlisted")
+            if not mapping.is_enabled:
+                raise HTTPException(status_code=403, detail="Output is not enabled")
+            
+            # Create command record
+            command_id = str(uuid.uuid4())
+            command = DeviceCommand(
+                command_id=command_id,
+                device_id=device.id,
+                output_id=request.output_id,
+                requested_state=OutputState(request.requested_state),
+                status=CommandStatus.PENDING,
+                expires_at=utcnow(),
+            )
+            session.add(command)
+            
+            # Log audit
+            audit = AuditLog(
+                action="PHYSICAL_COMMAND",
+                resource_type="output_mapping",
+                resource_id=request.output_id,
+                details={
+                    "device_id": request.device_id,
+                    "output_id": request.output_id,
+                    "requested_state": request.requested_state,
+                    "command_id": command_id,
+                },
+            )
+            session.add(audit)
+            
+            await session.commit()
+            
+            # Send via MQTT
+            try:
+                mqtt_service.send_command(
+                    device_id=request.device_id,
+                    output_id=request.output_id,
+                    requested_state=request.requested_state,
+                    command_id=command_id,
+                )
+                command.status = CommandStatus.SENT
+                await session.commit()
+            except Exception as e:
+                command.status = CommandStatus.FAILED
+                await session.commit()
+                raise HTTPException(status_code=500, detail=f"MQTT send failed: {e}")
+            
+            # Broadcast pending status
+            await ws_manager.broadcast("command_sent", {
+                "command_id": command_id,
+                "device_id": request.device_id,
+                "output_id": request.output_id,
+                "requested_state": request.requested_state,
+                "status": "SENT",
+            })
+            
+            return {
+                "command_id": command_id,
+                "device_id": request.device_id,
+                "output_id": request.output_id,
+                "requested_state": request.requested_state,
+                "status": "SENT",
+                "message": "Command sent. Waiting for device acknowledgement.",
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/commands")
+async def list_commands(limit: int = Query(20, le=100)):
+    """List recent commands."""
+    try:
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(DeviceCommand).order_by(desc(DeviceCommand.created_at)).limit(limit)
+            )
+            commands = result.scalars().all()
+            return [{
+                "id": str(c.id),
+                "command_id": c.command_id,
+                "output_id": c.output_id,
+                "requested_state": c.requested_state.value if c.requested_state else "UNKNOWN",
+                "status": c.status.value if c.status else "UNKNOWN",
+                "ack_success": c.ack_success,
+                "ack_reported_state": c.ack_reported_state.value if c.ack_reported_state else None,
+                "ack_error_reason": c.ack_error_reason,
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+                "ack_received_at": c.ack_received_at.isoformat() if c.ack_received_at else None,
+            } for c in commands]
+    except Exception:
+        return []
+
+
+# ──────────────────────────────────────────────
+# Alerts
+# ──────────────────────────────────────────────
+
+@app.get("/api/v1/alerts")
+async def list_alerts(status: Optional[str] = None, limit: int = Query(50, le=200)):
+    """List alerts."""
+    try:
+        async with async_session_factory() as session:
+            query = select(Alert).order_by(desc(Alert.created_at)).limit(limit)
+            if status:
+                query = query.where(Alert.status == AlertStatus(status))
+            result = await session.execute(query)
+            alerts = result.scalars().all()
+            return [{
+                "id": str(a.id),
+                "alert_type": a.alert_type,
+                "severity": a.severity.value if a.severity else "INFO",
+                "status": a.status.value if a.status else "ACTIVE",
+                "title": a.title,
+                "message": a.message,
+                "source": a.source,
+                "component_id": a.component_id,
+                "device_id": a.device_id,
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+            } for a in alerts]
+    except Exception:
+        return []
+
+
+# ──────────────────────────────────────────────
+# Events
+# ──────────────────────────────────────────────
+
+@app.get("/api/v1/events")
+async def list_events(limit: int = Query(50, le=200)):
+    """List recent events."""
+    try:
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(EventLog).order_by(desc(EventLog.created_at)).limit(limit)
+            )
+            events = result.scalars().all()
+            return [{
+                "id": str(e.id),
+                "event_type": e.event_type,
+                "source": e.source,
+                "title": e.title,
+                "description": e.description,
+                "component_id": e.component_id,
+                "device_id": e.device_id,
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+            } for e in events]
+    except Exception:
+        return []
+
+
+# ──────────────────────────────────────────────
+# Telemetry
+# ──────────────────────────────────────────────
+
+@app.post("/api/v1/telemetry")
+async def ingest_telemetry(request: TelemetryIngest):
+    """Ingest a telemetry record."""
+    try:
+        async with async_session_factory() as session:
+            record = TelemetryRecord(
+                device_id=request.device_id,
+                measurement_type=request.measurement_type,
+                value=request.value,
+                unit=request.unit,
+                is_simulated=request.is_simulated,
+                source=request.source,
+            )
+            session.add(record)
+            await session.commit()
+        
+        await ws_manager.broadcast("telemetry", {
+            "device_id": request.device_id,
+            "measurement_type": request.measurement_type,
+            "value": request.value,
+            "unit": request.unit,
+            "is_simulated": request.is_simulated,
+        })
+        
+        return {"status": "recorded"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/telemetry/{device_id}")
+async def get_telemetry(device_id: str, limit: int = Query(100, le=1000)):
+    """Get telemetry records for a device."""
+    try:
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(TelemetryRecord)
+                .where(TelemetryRecord.device_id == device_id)
+                .order_by(desc(TelemetryRecord.recorded_at))
+                .limit(limit)
+            )
+            records = result.scalars().all()
+            return [{
+                "id": str(r.id),
+                "device_id": r.device_id,
+                "measurement_type": r.measurement_type,
+                "value": r.value,
+                "unit": r.unit,
+                "is_simulated": r.is_simulated,
+                "source": r.source,
+                "recorded_at": r.recorded_at.isoformat() if r.recorded_at else None,
+            } for r in records]
+    except Exception:
+        return []
+
+
+# ──────────────────────────────────────────────
+# Settings
+# ──────────────────────────────────────────────
+
+@app.get("/api/v1/settings")
+async def get_settings():
+    """Get application settings."""
+    try:
+        async with async_session_factory() as session:
+            result = await session.execute(select(AppSetting))
+            settings_list = result.scalars().all()
+            return {s.key: s.value for s in settings_list}
+    except Exception:
+        return {
+            "physical_control_enabled": "false",
+            "simulation_level": "CONNECTIVITY",
+        }
+
+@app.put("/api/v1/settings/{key}")
+async def update_setting(key: str, value: str = Query(...)):
+    """Update an application setting."""
+    try:
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(AppSetting).where(AppSetting.key == key)
+            )
+            setting = result.scalar_one_or_none()
+            if setting:
+                setting.value = value
+            else:
+                session.add(AppSetting(key=key, value=value))
+            await session.commit()
+            return {"key": key, "value": value}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ──────────────────────────────────────────────
+# WebSocket
+# ──────────────────────────────────────────────
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for real-time frontend updates."""
+    await ws_manager.connect(websocket)
+    try:
+        # Send initial state
+        await ws_manager.send_to(websocket, "initial_state", {
+            "simulation": simulator.get_network_summary(),
+            "mqtt_connected": mqtt_service.is_connected,
+        })
+        
+        while True:
+            # Keep connection alive and handle client messages
+            data = await websocket.receive_text()
+            try:
+                msg = json.loads(data)
+                msg_type = msg.get("type")
+                
+                if msg_type == "ping":
+                    await ws_manager.send_to(websocket, "pong", {})
+                elif msg_type == "request_state":
+                    await ws_manager.send_to(websocket, "state_update", {
+                        "simulation": simulator.get_network_summary(),
+                        "mqtt_connected": mqtt_service.is_connected,
+                    })
+            except json.JSONDecodeError:
+                pass
+    except WebSocketDisconnect:
+        await ws_manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        await ws_manager.disconnect(websocket)
+
+
+# ──────────────────────────────────────────────
+# Init modules (needed for imports)
+# ──────────────────────────────────────────────
+
+import json

@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: gridtwin-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gridtwin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gridtwin_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-gridtwin}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gridtwin}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: gridtwin-mosquitto
+    ports:
+      - "${MQTT_BROKER_PORT:-1883}:1883"
+      - "9001:9001"
+    volumes:
+      - ./infrastructure/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./infrastructure/mosquitto/password_file:/mosquitto/config/password_file
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h localhost -p 1883 -t '$$SYS/#' -C 1 -W 3 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: gridtwin-backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-gridtwin}:${POSTGRES_PASSWORD:-gridtwin_secret}@postgres:5432/${POSTGRES_DB:-gridtwin}
+      DATABASE_URL_SYNC: postgresql://${POSTGRES_USER:-gridtwin}:${POSTGRES_PASSWORD:-gridtwin_secret}@postgres:5432/${POSTGRES_DB:-gridtwin}
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: 1883
+      MQTT_USERNAME: ${MQTT_USERNAME:-gridtwin}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-gridtwin_mqtt_secret}
+      BACKEND_SECRET_KEY: ${BACKEND_SECRET_KEY:-change-this}
+      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:5173}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: gridtwin-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  mosquitto_data:
+  mosquitto_log:
