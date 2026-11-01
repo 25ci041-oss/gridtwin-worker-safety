@@ -432,12 +432,26 @@ async def serve_index():
 
 if __name__ == "__main__":
     import uvicorn
+    import socket
+
+    def find_free_port(preferred: int) -> int:
+        for p in [preferred, 5002, 5005, 8001]:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                s.bind(('0.0.0.0', p))
+                s.close()
+                return p
+            except Exception:
+                pass
+        return preferred
+
+    listen_port = find_free_port(PORT)
     current_dir = os.path.dirname(os.path.abspath(__file__))
     print("=" * 65)
-    print(f"[*] GRIDTWIN TOLL-FREE IVR SERVICE STARTING ON http://localhost:{PORT}")
+    print(f"[*] GRIDTWIN TOLL-FREE IVR SERVICE STARTING ON http://localhost:{listen_port}")
     print(f"[*] Toll-Free Number: {TOLL_FREE_NUMBER} ({TOLL_FREE_E164})")
-    print(f"[*] Webphone & Simulator: http://localhost:{PORT}/")
-    print(f"[*] Twilio Webhook URL: http://localhost:{PORT}/ivr/welcome")
+    print(f"[*] Webphone & Simulator: http://localhost:{listen_port}/")
+    print(f"[*] Twilio Webhook URL: http://localhost:{listen_port}/ivr/welcome")
     print("=" * 65)
-    uvicorn.run("app:app", host=HOST, port=PORT, app_dir=current_dir)
+    uvicorn.run("app:app", host=HOST, port=listen_port, app_dir=current_dir)
 
