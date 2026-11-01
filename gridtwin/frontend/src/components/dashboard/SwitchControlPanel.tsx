@@ -52,21 +52,25 @@ export const SwitchControlPanel: React.FC = () => {
   const isBypassClosed = bypassSwitchState === 'CLOSED';
 
   return (
-    <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col gap-4">
+    <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-2xl flex flex-col gap-4 select-none">
       {/* Header with Title and Global Actions */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
-        <div>
-          <h2 className="text-sm md:text-base font-extrabold text-white flex items-center gap-2">
-            <Power className="w-5 h-5 text-cyan-400" />
-            <span>SWITCHGEAR CONTROL CONSOLE & FRONT BYPASS NETWORK</span>
-          </h2>
-          <p className="text-xs text-slate-300 font-medium">
-            Bidirectional switching for Feeder Sections T1–T5 and Universal Front Bypass Bus.
-          </p>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-3.5">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shrink-0 shadow-sm">
+            <Power className="w-5 h-5" />
+          </div>
+          <div>
+            <h2 className="text-sm sm:text-base font-extrabold text-white tracking-wide">
+              SWITCHGEAR CONTROL CONSOLE &amp; FRONT BYPASS NETWORK
+            </h2>
+            <p className="text-xs text-slate-400 font-medium">
+              Bidirectional switching for Feeder Sections T1–T5 and Universal Front Bypass Bus.
+            </p>
+          </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex flex-wrap items-center gap-2.5">
+        {/* Global Quick Action Controls */}
+        <div className="flex flex-wrap items-center gap-2">
           {/* Tower Isolation Quick Group */}
           <div className="flex items-center gap-1.5 bg-slate-950/80 p-1.5 rounded-xl border border-slate-800">
             <span className="text-xs text-slate-300 font-mono font-bold px-1">Isolate:</span>
@@ -133,7 +137,7 @@ export const SwitchControlPanel: React.FC = () => {
       </div>
 
       {/* Grid of 5 Tower Switches + 1 Bypass Switch */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3.5">
         {/* Main 5 Tower Section Switches */}
         {switches.map((sw) => {
           const isClosed = sw.state === 'CLOSED';
@@ -143,23 +147,23 @@ export const SwitchControlPanel: React.FC = () => {
           return (
             <div
               key={sw.id}
-              className={`relative rounded-xl border p-3 flex flex-col justify-between transition-all duration-300 ${
+              className={`relative rounded-xl border p-3.5 flex flex-col justify-between transition-all duration-300 ${
                 isClosed
-                  ? 'bg-slate-900/90 border-emerald-500/40 shadow-lg shadow-emerald-500/5'
-                  : 'bg-slate-950/90 border-rose-500/30 shadow-lg shadow-rose-500/5'
+                  ? 'bg-slate-900/95 border-emerald-500/40 shadow-lg shadow-emerald-500/5 hover:border-emerald-500/60'
+                  : 'bg-slate-950/95 border-rose-500/40 shadow-lg shadow-rose-500/5 hover:border-rose-500/60'
               }`}
             >
               {/* Card Header */}
               <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs md:text-sm font-black font-mono text-white bg-slate-800 px-2.5 py-0.5 rounded border border-slate-700">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-black font-mono text-cyan-300 bg-slate-800/90 px-2.5 py-1 rounded-lg border border-slate-700">
                     {sw.section_id}
                   </span>
                   <span
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-bold rounded-full border ${
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold rounded-full border ${
                       isClosed
-                        ? 'bg-emerald-950/80 text-emerald-400 border-emerald-500/50'
-                        : 'bg-rose-950/80 text-rose-400 border-rose-500/50'
+                        ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/50'
+                        : 'bg-rose-950/80 text-rose-300 border-rose-500/50'
                     }`}
                   >
                     <span
@@ -171,64 +175,72 @@ export const SwitchControlPanel: React.FC = () => {
                   </span>
                 </div>
 
-                <h3 className="text-xs md:text-sm font-bold text-slate-100 line-clamp-1 mb-1" title={sw.name}>
-                  {load?.name || sw.name}
-                </h3>
-
-                {/* Demand & Category */}
-                <div className="flex items-center justify-between text-xs text-slate-300 font-mono mb-2">
-                  <span>Demand:</span>
-                  <span className={isClosed ? 'text-cyan-300 font-bold' : 'text-slate-500'}>
-                    {load ? `${load.demand_kw} kW` : '0 kW'}
+                <div className="mb-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                    Feeder Section {sw.section_id}
                   </span>
+                  <h3 className="text-sm font-extrabold text-white truncate" title={load?.name || sw.name}>
+                    {load?.name || sw.name}
+                  </h3>
                 </div>
-              </div>
 
-              {/* Hardware Bridge Indicator */}
-              <div className="bg-slate-950/70 rounded-lg p-2 border border-slate-800 mb-3 text-xs font-mono flex items-center justify-between text-slate-300">
-                <div className="flex items-center gap-1.5">
-                  <Cpu className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>GPIO {sw.gpio_pin}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-slate-400">Relay:</span>
-                  <span
-                    className={`font-black ${
-                      hardwareState === 'ON' ? 'text-emerald-400' : 'text-slate-400'
-                    }`}
-                  >
-                    {hardwareState}
-                  </span>
-                  {physicalSyncEnabled && (
-                    <CheckCircle2 className="w-3 h-3 text-emerald-400 ml-0.5" />
-                  )}
+                {/* Telemetry & Relay Box: Stacked 2 Rows to Prevent Letter Overlaps */}
+                <div className="bg-slate-950/80 rounded-xl p-2.5 border border-slate-800/80 flex flex-col gap-1.5 mb-3">
+                  <div className="flex items-center justify-between text-xs font-mono">
+                    <span className="text-slate-400 font-medium">Demand</span>
+                    <span className={`font-black ${isClosed ? 'text-cyan-300' : 'text-slate-500'}`}>
+                      {load ? `${load.demand_kw} kW` : '0 kW'}
+                    </span>
+                  </div>
+                  <div className="h-[1px] bg-slate-800/80" />
+                  <div className="flex items-center justify-between text-xs font-mono">
+                    <span className="text-slate-400 flex items-center gap-1">
+                      <Cpu className="w-3.5 h-3.5 text-cyan-400" />
+                      GPIO {sw.gpio_pin}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="text-slate-400 text-[11px]">Relay:</span>
+                      <span
+                        className={`font-black ${
+                          hardwareState === 'ON' ? 'text-emerald-400' : 'text-slate-400'
+                        }`}
+                      >
+                        {hardwareState}
+                      </span>
+                      {physicalSyncEnabled && (
+                        <CheckCircle2 className="w-3 h-3 text-emerald-400 ml-0.5" />
+                      )}
+                    </span>
+                  </div>
                 </div>
               </div>
 
               {/* Action Button */}
-              <button
-                onClick={() => toggleSwitch(sw.switch_id, interlockBypass)}
-                className={`w-full py-2 px-3 rounded-xl text-xs md:text-sm font-black transition-all flex items-center justify-center gap-2 shadow-md active:scale-95 ${
-                  isClosed
-                    ? 'bg-rose-600/25 hover:bg-rose-600/35 text-rose-200 border border-rose-500/50'
-                    : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/25'
-                }`}
-              >
-                {isClosed ? (
-                  <>
-                    <ToggleRight className="w-4 h-4 text-rose-400" />
-                    <span>TRIP / OPEN</span>
-                  </>
-                ) : (
-                  <>
-                    <ToggleLeft className="w-4 h-4" />
-                    <span>CLOSE / ENERGIZE</span>
-                  </>
-                )}
-              </button>
+              <div>
+                <button
+                  onClick={() => toggleSwitch(sw.switch_id, interlockBypass)}
+                  className={`w-full py-2.5 px-3 rounded-xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-2 shadow-md active:scale-95 ${
+                    isClosed
+                      ? 'bg-rose-600/20 hover:bg-rose-600/35 text-rose-300 border border-rose-500/50'
+                      : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/25'
+                  }`}
+                >
+                  {isClosed ? (
+                    <>
+                      <ToggleRight className="w-4 h-4 text-rose-400 shrink-0" />
+                      <span>TRIP / OPEN</span>
+                    </>
+                  ) : (
+                    <>
+                      <ToggleLeft className="w-4 h-4 shrink-0" />
+                      <span>CLOSE / ENERGIZE</span>
+                    </>
+                  )}
+                </button>
 
-              <div className="mt-2 text-center text-[9px] text-slate-500 font-mono">
-                {sw.last_operated || 'Online'}
+                <div className="mt-2 text-center text-[10px] text-slate-500 font-mono">
+                  {sw.last_operated || 'Normal Operation'}
+                </div>
               </div>
             </div>
           );
@@ -236,26 +248,26 @@ export const SwitchControlPanel: React.FC = () => {
 
         {/* DEDICATED CARD: Alternate Route Bypass Switch */}
         <div
-          className={`relative rounded-xl border p-3 flex flex-col justify-between transition-all duration-300 ${
+          className={`relative rounded-xl border p-3.5 flex flex-col justify-between transition-all duration-300 ${
             isBypassClosed
-              ? 'bg-emerald-950/30 border-emerald-500/60 shadow-lg shadow-emerald-500/10'
-              : 'bg-slate-950/90 border-slate-700/60'
+              ? 'bg-emerald-950/30 border-emerald-500/60 shadow-lg shadow-emerald-500/10 hover:border-emerald-500/80'
+              : 'bg-slate-950/95 border-slate-800 shadow-md hover:border-slate-700'
           }`}
         >
           <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-xs font-bold font-mono text-cyan-300 bg-cyan-950/80 px-2 py-0.5 rounded border border-cyan-800">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-black font-mono text-cyan-300 bg-cyan-950/80 px-2.5 py-1 rounded-lg border border-cyan-700">
                 BYPASS
               </span>
               <span
-                className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full border ${
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold rounded-full border ${
                   isBypassClosed
-                    ? 'bg-emerald-950/80 text-emerald-400 border-emerald-500/40'
+                    ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/50'
                     : 'bg-slate-800 text-slate-400 border-slate-700'
                 }`}
               >
                 <span
-                  className={`w-1.5 h-1.5 rounded-full ${
+                  className={`w-2 h-2 rounded-full ${
                     isBypassClosed ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'
                   }`}
                 />
@@ -263,46 +275,59 @@ export const SwitchControlPanel: React.FC = () => {
               </span>
             </div>
 
-            <h3 className="text-xs font-semibold text-white mb-1 flex items-center gap-1">
-              <GitBranch className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Bypass Switch</span>
-            </h3>
+            <div className="mb-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                Alternate Feeder Route
+              </span>
+              <h3 className="text-sm font-extrabold text-white flex items-center gap-1.5 truncate">
+                <GitBranch className="w-4 h-4 text-cyan-400 shrink-0" />
+                <span>Bypass Switch</span>
+              </h3>
+            </div>
 
-            <p className="text-[10px] text-slate-400 leading-tight mb-2">
-              Bypasses isolated sections and powers remaining healthy towers.
-            </p>
+            {/* Telemetry & Mode Box */}
+            <div className="bg-slate-950/80 rounded-xl p-2.5 border border-slate-800/80 flex flex-col gap-1.5 mb-3">
+              <div className="flex items-center justify-between text-xs font-mono">
+                <span className="text-slate-400 font-medium">Route Status</span>
+                <span className={isBypassClosed ? 'text-emerald-400 font-bold' : 'text-slate-400 font-bold'}>
+                  {isBypassClosed ? 'Active Loop' : 'Standby'}
+                </span>
+              </div>
+              <div className="h-[1px] bg-slate-800/80" />
+              <div className="flex items-center justify-between text-xs font-mono">
+                <span className="text-slate-400 font-medium">Supply Mode</span>
+                <span className={`font-black text-[11px] ${isBypassClosed ? 'text-emerald-400' : 'text-slate-400'}`}>
+                  {isBypassClosed ? 'FAULT BYPASS' : 'NORMAL'}
+                </span>
+              </div>
+            </div>
           </div>
 
-          <div className="bg-slate-950/80 rounded-lg p-2 border border-slate-800 mb-3 text-[10px] font-mono text-center">
-            <span className="text-slate-400 block text-[9px]">CONNECTION MODE</span>
-            <span className={isBypassClosed ? 'text-emerald-400 font-bold' : 'text-slate-400 font-bold'}>
-              {isBypassClosed ? 'ISOLATION & BYPASS (ON)' : 'NORMAL CONNECTION'}
-            </span>
-          </div>
+          <div>
+            <button
+              onClick={toggleBypassSwitch}
+              className={`w-full py-2.5 px-3 rounded-xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-2 shadow-md active:scale-95 ${
+                isBypassClosed
+                  ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/25'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
+              }`}
+            >
+              {isBypassClosed ? (
+                <>
+                  <ToggleRight className="w-4 h-4 text-slate-950 shrink-0" />
+                  <span>BYPASS ON (ACTIVE)</span>
+                </>
+              ) : (
+                <>
+                  <ToggleLeft className="w-4 h-4 text-slate-400 shrink-0" />
+                  <span>TURN BYPASS ON</span>
+                </>
+              )}
+            </button>
 
-          <button
-            onClick={toggleBypassSwitch}
-            className={`w-full py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm ${
-              isBypassClosed
-                ? 'bg-emerald-600 hover:bg-emerald-500 text-slate-950 shadow-emerald-500/20'
-                : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
-            }`}
-          >
-            {isBypassClosed ? (
-              <>
-                <ToggleRight className="w-4 h-4 text-slate-950" />
-                <span>BYPASS ON (ACTIVE)</span>
-              </>
-            ) : (
-              <>
-                <ToggleLeft className="w-4 h-4 text-slate-400" />
-                <span>TURN BYPASS ON</span>
-              </>
-            )}
-          </button>
-
-          <div className="mt-2 text-center text-[9px] text-slate-500 font-mono">
-            {isBypassClosed ? 'Isolation Route Active' : 'Normal Main Line Route'}
+            <div className="mt-2 text-center text-[10px] text-slate-500 font-mono">
+              {isBypassClosed ? 'Isolation Route Active' : 'Normal Main Line Route'}
+            </div>
           </div>
         </div>
       </div>
