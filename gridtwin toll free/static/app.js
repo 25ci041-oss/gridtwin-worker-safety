@@ -3,9 +3,9 @@
  * 
  * Handles:
  * - DTMF tone generation & keypress dispatch
- * - Browser Web Speech API (Tamil, English, Hindi TTS)
- * - Live tower telemetry synchronization
- * - Call transcript logging
+ * - Browser Web Speech API & Real Edge Neural Voice (Tamil, English, Hindi)
+ * - 2-Way Real-time Tower Telemetry & Isolation Sync with 3D Digital Twin
+ * - Real-time call transcript & DTMF logging
  */
 
 // Application State
@@ -20,17 +20,15 @@ let audioContext = null;
 const btnStartCall = document.getElementById("btnStartCall");
 const btnHangup = document.getElementById("btnHangup");
 const phoneDisplayText = document.getElementById("phoneDisplayText");
-const callStatusLabel = document.getElementById("callStatusLabel");
+const callStatusText = document.getElementById("callStatusText");
+const callStatusDot = document.getElementById("callStatusDot");
 const callTimer = document.getElementById("callTimer");
 const speakerVisualizer = document.getElementById("speakerVisualizer");
 const speechBubble = document.getElementById("speechBubble");
 const chkAudioSpeech = document.getElementById("chkAudioSpeech");
 const transcriptLog = document.getElementById("transcriptLog");
 const towerCardsContainer = document.getElementById("towerCardsContainer");
-const btnRefreshTowers = document.getElementById("btnRefreshTowers");
 const btnClearLog = document.getElementById("btnClearLog");
-const btnCopyWebhook = document.getElementById("btnCopyWebhook");
-const webhookUrlSpan = document.getElementById("webhookUrl");
 
 // DTMF Frequencies (Row & Col)
 const DTMF_FREQS = {
@@ -40,7 +38,7 @@ const DTMF_FREQS = {
   "*": [941, 1209], "0": [941, 1336], "#": [941, 1477],
 };
 
-// Play DTMF beep sound in browser
+// Play DTMF dual tone in browser
 function playDtmfTone(key) {
   try {
     if (!audioContext) {
@@ -86,88 +84,75 @@ function stopAllAudio() {
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
   }
-  speakerVisualizer.classList.remove("speaking");
-  speechBubble.textContent = "Voice speaker ready";
+  if (speakerVisualizer) speakerVisualizer.classList.remove("speaking");
+  if (speechBubble) speechBubble.textContent = "Voice speaker ready";
 }
 
 function playRealVoice(audioUrl, fallbackText, lang = "en-IN", callback = null) {
-  if (!chkAudioSpeech.checked) {
+  if (!chkAudioSpeech || !chkAudioSpeech.checked) {
     if (callback) callback();
     return;
   }
 
   stopAllAudio();
 
-  speakerVisualizer.classList.add("speaking");
-  speechBubble.textContent = `Speaking (${lang})...`;
+  if (speakerVisualizer) speakerVisualizer.classList.add("speaking");
+  if (speechBubble) speechBubble.textContent = `Speaking (${lang.split('-')[0]})...`;
 
   if (audioUrl) {
-    const audio = new Audio(audioUrl);
-    currentAudioPlayer = audio;
-
-    audio.onended = () => {
-      speakerVisualizer.classList.remove("speaking");
-      speechBubble.textContent = "Voice speaker ready";
-      currentAudioPlayer = null;
+    currentAudioPlayer = new Audio(audioUrl);
+    currentAudioPlayer.onended = () => {
+      stopAllAudio();
       if (callback) callback();
     };
-
-    audio.onerror = (e) => {
-      console.warn("Audio file failed to play, falling back to browser TTS:", e);
-      speakAloudBrowser(fallbackText, lang, callback);
+    currentAudioPlayer.onerror = () => {
+      console.warn("Real neural audio failed, falling back to Web Speech:", audioUrl);
+      playFallbackWebSpeech(fallbackText, lang, callback);
     };
-
-    audio.play().catch(err => {
-      console.warn("Audio play() blocked, falling back to browser TTS:", err);
-      speakAloudBrowser(fallbackText, lang, callback);
+    currentAudioPlayer.play().catch(err => {
+      console.warn("Audio autoplay blocked, falling back:", err);
+      playFallbackWebSpeech(fallbackText, lang, callback);
     });
   } else {
-    speakAloudBrowser(fallbackText, lang, callback);
+    playFallbackWebSpeech(fallbackText, lang, callback);
   }
 }
 
-// Fallback Browser Speech Synthesis
-function speakAloudBrowser(text, lang = "en-IN", callback = null) {
-  if (!('speechSynthesis' in window)) {
+function playFallbackWebSpeech(text, lang = "en-IN", callback = null) {
+  if (!('speechSynthesis' in window) || !chkAudioSpeech.checked) {
+    stopAllAudio();
     if (callback) callback();
     return;
   }
 
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = 0.92;
-  utterance.pitch = 1.0;
+  const cleanText = text.replace(/\[OPTIONS\].*$/, "").trim();
+  const utterance = new SpeechSynthesisUtterance(cleanText);
   utterance.lang = lang;
+  utterance.rate = 0.95;
 
   const voices = window.speechSynthesis.getVoices();
-  const matchedVoice = voices.find(v => v.lang === lang || v.lang.startsWith(lang.split('-')[0]));
-  if (matchedVoice) {
-    utterance.voice = matchedVoice;
-  }
+  const langPrefix = lang.split("-")[0];
+  const matchedVoice = voices.find(v => v.lang.startsWith(langPrefix) || v.lang === lang);
+  if (matchedVoice) utterance.voice = matchedVoice;
 
   utterance.onend = () => {
-    speakerVisualizer.classList.remove("speaking");
-    speechBubble.textContent = "Voice speaker ready";
+    stopAllAudio();
     if (callback) callback();
   };
-
   utterance.onerror = () => {
-    speakerVisualizer.classList.remove("speaking");
-    speechBubble.textContent = "Voice speaker ready";
+    stopAllAudio();
     if (callback) callback();
   };
 
   window.speechSynthesis.speak(utterance);
 }
 
-// Pre-load voices
-if ('speechSynthesis' in window) {
-  window.speechSynthesis.onvoiceschanged = () => {
-    window.speechSynthesis.getVoices();
-  };
-}
+// ──────────────────────────────────────────────
+// Call Transcript Logging
+// ──────────────────────────────────────────────
 
-// Add Transcript Entry
 function addTranscript(type, msg) {
+  if (!transcriptLog) return;
   const now = new Date();
   const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   
@@ -187,18 +172,19 @@ function escapeHtml(text) {
 // Timer Functions
 function startTimer() {
   callDurationSec = 0;
-  callTimer.textContent = "00:00";
+  if (callTimer) callTimer.textContent = "(00:00)";
   clearInterval(callTimerInterval);
   callTimerInterval = setInterval(() => {
     callDurationSec++;
     const m = String(Math.floor(callDurationSec / 60)).padStart(2, '0');
     const s = String(callDurationSec % 60).padStart(2, '0');
-    callTimer.textContent = `${m}:${s}`;
+    if (callTimer) callTimer.textContent = `(${m}:${s})`;
   }, 1000);
 }
 
 function stopTimer() {
   clearInterval(callTimerInterval);
+  if (callTimer) callTimer.textContent = "";
 }
 
 // ──────────────────────────────────────────────
@@ -208,8 +194,8 @@ function stopTimer() {
 async function startCall() {
   try {
     addTranscript("caller", "📞 Dialing 1800-419-GRID (Toll-Free)...");
-    callStatusLabel.textContent = "Connecting...";
-    callStatusLabel.className = "call-status active";
+    if (callStatusText) callStatusText.textContent = "Calling...";
+    if (callStatusDot) callStatusDot.className = "status-dot-green pulsing";
     btnStartCall.disabled = true;
     btnHangup.disabled = false;
 
@@ -218,15 +204,14 @@ async function startCall() {
 
     callActive = true;
     startTimer();
-    callStatusLabel.textContent = "Call Connected (Toll-Free)";
+    if (callStatusText) callStatusText.textContent = "Call Connected";
     currentStage = "LANGUAGE_SELECTION";
-    phoneDisplayText.textContent = data.display_text;
+    if (phoneDisplayText) phoneDisplayText.textContent = data.display_text;
 
     addTranscript("ivr", "Connected to GRIDTWIN 24/7 Hotline.");
     addTranscript("ivr", "Prompt: 1 for Tamil | 2 for English | 3 for Hindi");
 
-    // Speak initial prompts sequentially using real neural audio
-    if (chkAudioSpeech.checked && data.speech_prompts) {
+    if (chkAudioSpeech && chkAudioSpeech.checked && data.speech_prompts) {
       playWelcomeSequence(data.speech_prompts);
     }
 
@@ -254,9 +239,11 @@ function hangupCall() {
   stopTimer();
   stopAllAudio();
   
-  callStatusLabel.textContent = "Call Ended";
-  callStatusLabel.className = "call-status";
-  phoneDisplayText.textContent = "Call ended.\nClick 'Call Toll-Free' to start a new call.";
+  if (callStatusText) callStatusText.textContent = "Ready to Call";
+  if (callStatusDot) callStatusDot.className = "status-dot-green";
+  if (phoneDisplayText) {
+    phoneDisplayText.textContent = "Press the green \"Call Toll-Free\" button below to test the IVR system.";
+  }
   
   btnStartCall.disabled = false;
   btnHangup.disabled = true;
@@ -291,7 +278,7 @@ async function handleKeyPress(key) {
     const result = await res.json();
 
     if (!result.success && result.error) {
-      phoneDisplayText.textContent = result.display_text;
+      if (phoneDisplayText) phoneDisplayText.textContent = result.display_text;
       addTranscript("alert", result.display_text);
       if (result.speech) {
         playRealVoice(result.audio_url, result.speech.text, result.speech.lang);
@@ -299,24 +286,20 @@ async function handleKeyPress(key) {
       return;
     }
 
-    // Process State Changes
     currentStage = result.stage;
     if (result.lang) selectedLanguage = result.lang;
 
-    phoneDisplayText.textContent = result.display_text;
+    if (phoneDisplayText) phoneDisplayText.textContent = result.display_text;
     addTranscript("ivr", result.display_text);
 
-    // Speak speech prompt with Real Neural Audio
     if (result.speech) {
       playRealVoice(result.audio_url, result.speech.text, result.speech.lang);
     }
 
-    // If call ended by menu
     if (currentStage === "CALL_ENDED") {
       setTimeout(hangupCall, 4000);
     }
 
-    // Refresh towers display if tower was inspected
     if (result.tower_data) {
       fetchTowersStatus();
     }
@@ -328,7 +311,107 @@ async function handleKeyPress(key) {
 }
 
 // ──────────────────────────────────────────────
-// Live Towers Telemetry Polling
+// SVG Transmission Tower Graphics (Lattice Pylon)
+// ──────────────────────────────────────────────
+
+function getTowerSvg(isIsolated) {
+  if (isIsolated) {
+    return `
+      <svg class="pylon-graphic" viewBox="0 0 160 120" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="g-mound-iso" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#450a0a" />
+            <stop offset="100%" stop-color="#1e0505" />
+          </linearGradient>
+          <filter id="glow-iso" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="2.2" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+          </filter>
+        </defs>
+        <!-- Ground Base Mound -->
+        <ellipse cx="80" cy="112" rx="68" ry="7" fill="url(#g-mound-iso)" />
+        <path d="M15 112 Q80 108 145 112" stroke="#ef4444" stroke-width="2" fill="none" opacity="0.7" />
+        
+        <!-- Disconnected Dashed Power Lines -->
+        <path d="M0 45 L48 49" stroke="#ef4444" stroke-width="1.8" stroke-dasharray="4,4" fill="none" opacity="0.8" />
+        <path d="M112 49 L160 45" stroke="#ef4444" stroke-width="1.8" stroke-dasharray="4,4" fill="none" opacity="0.8" />
+        <path d="M0 65 L40 68" stroke="#ef4444" stroke-width="1.8" stroke-dasharray="4,4" fill="none" opacity="0.8" />
+        <path d="M120 68 L160 65" stroke="#ef4444" stroke-width="1.8" stroke-dasharray="4,4" fill="none" opacity="0.8" />
+
+        <!-- Tower Lattice Structure (Muted Alert Red) -->
+        <g stroke="#f87171" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow-iso)">
+          <!-- Main Legs -->
+          <line x1="56" y1="112" x2="74" y2="24" />
+          <line x1="104" y1="112" x2="86" y2="24" />
+          <!-- Peak -->
+          <line x1="74" y1="24" x2="80" y2="8" />
+          <line x1="86" y1="24" x2="80" y2="8" />
+          <!-- Crossarms -->
+          <line x1="48" y1="45" x2="112" y2="45" />
+          <line x1="38" y1="65" x2="122" y2="65" />
+          <!-- Cross Bracing -->
+          <line x1="60" y1="96" x2="100" y2="96" />
+          <line x1="60" y1="96" x2="96" y2="80" />
+          <line x1="100" y1="96" x2="64" y2="80" />
+          <line x1="64" y1="80" x2="96" y2="80" />
+          <line x1="67" y1="65" x2="93" y2="65" />
+          <line x1="70" y1="45" x2="90" y2="45" />
+        </g>
+
+        <!-- Isolation Cut-Off Badge -->
+        <circle cx="80" cy="55" r="14" fill="#7f1d1d" stroke="#ef4444" stroke-width="2" />
+        <text x="80" y="60.5" text-anchor="middle" fill="#fee2e2" font-size="13" font-weight="900" font-family="sans-serif">✕</text>
+      </svg>
+    `;
+  } else {
+    return `
+      <svg class="pylon-graphic" viewBox="0 0 160 120" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="g-mound-act" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#064e3b" />
+            <stop offset="100%" stop-color="#022c22" />
+          </linearGradient>
+          <filter id="glow-act" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="2" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+          </filter>
+        </defs>
+        <!-- Ground Base Mound -->
+        <ellipse cx="80" cy="112" rx="68" ry="7" fill="url(#g-mound-act)" opacity="0.9" />
+        <path d="M15 112 Q80 108 145 112" stroke="#10b981" stroke-width="2.2" fill="none" opacity="0.85" />
+        
+        <!-- Continuous High-Voltage Power Lines -->
+        <path d="M0 45 Q80 50 160 45" stroke="#38bdf8" stroke-width="1.8" fill="none" opacity="0.85" />
+        <path d="M0 65 Q80 70 160 65" stroke="#38bdf8" stroke-width="1.8" fill="none" opacity="0.85" />
+
+        <!-- Tower Lattice Structure (Glowing Neon Red / Coral Pylon) -->
+        <g stroke="#ff3355" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow-act)">
+          <!-- Main Legs -->
+          <line x1="56" y1="112" x2="74" y2="24" />
+          <line x1="104" y1="112" x2="86" y2="24" />
+          <!-- Peak -->
+          <line x1="74" y1="24" x2="80" y2="8" />
+          <line x1="86" y1="24" x2="80" y2="8" />
+          <!-- Crossarms -->
+          <line x1="48" y1="45" x2="112" y2="45" />
+          <line x1="38" y1="65" x2="122" y2="65" />
+          <!-- Cross Bracing Lattice -->
+          <line x1="60" y1="96" x2="100" y2="96" />
+          <line x1="60" y1="96" x2="96" y2="80" />
+          <line x1="100" y1="96" x2="64" y2="80" />
+          <line x1="64" y1="80" x2="96" y2="80" />
+          <line x1="67" y1="65" x2="93" y2="65" />
+          <line x1="70" y1="45" x2="90" y2="45" />
+          <!-- Vertical center apex -->
+          <line x1="80" y1="8" x2="80" y2="45" stroke-width="1.5" opacity="0.7" />
+        </g>
+      </svg>
+    `;
+  }
+}
+
+// ──────────────────────────────────────────────
+// Live Towers Telemetry Polling (Every 1.5s)
 // ──────────────────────────────────────────────
 
 async function fetchTowersStatus() {
@@ -342,34 +425,28 @@ async function fetchTowersStatus() {
 }
 
 function renderTowerCards(towers) {
-  if (!towers || Object.keys(towers).length === 0) return;
+  if (!towers || Object.keys(towers).length === 0 || !towerCardsContainer) return;
 
   const isolatedList = [];
-  const activeList = [];
   for (const [num, t] of Object.entries(towers)) {
     if (t.is_isolated) {
       isolatedList.push(`Tower ${num} (${t.tower_id})`);
-    } else {
-      activeList.push(`T${num}`);
     }
   }
 
-  // Update Grid Summary Banner
+  // Update Dynamic Grid Summary Alert Banner
   const alertBar = document.getElementById("gridStatusAlertBar");
   const alertIcon = document.getElementById("gridAlertIcon");
   const alertText = document.getElementById("gridAlertText");
-  const alertTag = document.getElementById("gridAlertTag");
   if (alertBar && alertText) {
     if (isolatedList.length > 0) {
       alertBar.className = "grid-status-alert-bar has-isolation";
       if (alertIcon) alertIcon.textContent = "🚨";
-      alertText.innerHTML = `<strong>FAULT ISOLATION DETECTED:</strong> ${isolatedList.join(", ")} is currently ISOLATED. Power supply is cut off. Live telemetry in sync with 3D Twin.`;
-      if (alertTag) alertTag.textContent = `${isolatedList.length} ISOLATED`;
+      alertText.textContent = `Fault Isolation Detected – ${isolatedList.join(", ")} is currently ISOLATED. Power supply is cut off. Real-time telemetry in sync with 3D Twin.`;
     } else {
       alertBar.className = "grid-status-alert-bar all-normal";
-      if (alertIcon) alertIcon.textContent = "⚡";
-      alertText.innerHTML = `<strong>ALL TOWERS NORMAL:</strong> 5/5 towers active and transmitting power. Normal line flow.`;
-      if (alertTag) alertTag.textContent = `5/5 ACTIVE`;
+      if (alertIcon) alertIcon.textContent = "✔";
+      alertText.textContent = "All Towers Normal – 5/5 towers active and transmitting power. Normal line flow.";
     }
   }
 
@@ -378,38 +455,45 @@ function renderTowerCards(towers) {
     const isIsolated = t.is_isolated;
     const cardClass = isIsolated ? "isolated" : "normal";
     const badgeClass = isIsolated ? "badge-isolated" : "badge-normal";
-    const badgeText = isIsolated ? "🚨 ISOLATED" : "⚡ ACTIVE";
-    const currentHtml = isIsolated 
-      ? `<strong style="color: #ef4444; font-weight: 800;">0.0 mA (CUT OFF)</strong>`
-      : `<strong style="color: #10b981; font-weight: 800;">${t.current_ma} mA (FLOWING)</strong>`;
-    const statusNote = isIsolated
-      ? `<div style="font-size: 11px; color: #f87171; margin-top: 4px; font-weight: 600;">⚠️ Power Line Cut Off / Isolated</div>`
-      : `<div style="font-size: 11px; color: #34d399; margin-top: 4px;">✔ Live Transmission Active</div>`;
-
-    const toggleBtnText = isIsolated ? "⚡ Restore" : "🚫 Isolate";
+    const badgeText = isIsolated ? "ISOLATED" : "ACTIVE";
+    
+    const currentVal = isIsolated ? "0 mA" : `${Math.round(t.current_ma)} mA`;
+    const voltageVal = isIsolated ? "0 V" : `${Math.round(t.voltage_v)} V`;
+    const statusText = isIsolated ? "✖ Line Cut Off (Isolated)" : "✔ Live Transmission";
+    
+    const toggleBtnText = isIsolated ? "⚡ Restore" : "⚙ Isolate";
     const toggleBtnClass = isIsolated ? "restore-btn" : "isolate-btn";
 
     html += `
       <div class="tower-card ${cardClass}" id="card-tower-${num}">
         <div class="tower-card-top">
           <span class="tower-title">Tower ${t.tower_number} (${t.tower_id})</span>
-          <span class="tower-badge ${badgeClass}">${badgeText}</span>
+          <span class="tower-badge ${badgeClass}"><span class="badge-dot"></span>${badgeText}</span>
         </div>
-        <div class="tower-metric">
-          Line Current: ${currentHtml}
+        
+        <div class="tower-graphic-box">
+          ${getTowerSvg(isIsolated)}
         </div>
-        <div class="tower-metric">
-          Bus Voltage: <strong>${t.voltage_v} V</strong>
+
+        <div class="tower-metrics-list">
+          <div class="metric-row">
+            <span class="metric-label">Line Current:</span>
+            <span class="metric-value-current ${isIsolated ? 'isolated' : ''}">${currentVal}</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Bus Voltage:</span>
+            <span class="metric-value-volt">${voltageVal}</span>
+          </div>
+          <div class="transmission-status ${isIsolated ? 'isolated' : 'active'}">
+            ${statusText}
+          </div>
         </div>
-        ${statusNote}
-        <div class="tower-metric" style="font-size: 10px; color: var(--text-muted); margin-top: 6px;">
-          Telemetry Source: ${t.source} (${t.device_status})
-        </div>
+
         <div class="tower-card-actions">
-          <button class="tower-card-btn btn-card-dial" onclick="quickDialTower('${num}')" title="Call Toll-Free hotline and query Tower ${num}">
+          <button class="tower-card-btn btn-card-dial" onclick="quickDialTower('${num}')" title="Dial and query Tower ${num}">
             📞 Dial T${num}
           </button>
-          <button class="tower-card-btn btn-card-toggle ${toggleBtnClass}" onclick="toggleTowerIsolation('${t.tower_id}', ${isIsolated})" title="2-way toggle isolation with 3D Twin">
+          <button class="tower-card-btn btn-card-toggle ${toggleBtnClass}" onclick="toggleTowerIsolation('${t.tower_id}', ${isIsolated})" title="2-way toggle with 3D Twin">
             ${toggleBtnText}
           </button>
         </div>
@@ -419,12 +503,11 @@ function renderTowerCards(towers) {
   towerCardsContainer.innerHTML = html;
 }
 
-// 2-Way Command Dispatch from Toll-Free UI to Digital Twin
+// 2-Way Command Dispatch: Toll-Free UI -> Digital Twin Backend
 async function toggleTowerIsolation(towerId, currentIsIsolated) {
   const endpoint = currentIsIsolated ? `/api/towers/${towerId}/restore` : `/api/towers/${towerId}/isolate`;
   try {
-    const res = await fetch(endpoint, { method: "POST" });
-    const result = await res.json();
+    await fetch(endpoint, { method: "POST" });
     addTranscript("system", `[2-WAY SYNC] Tower ${towerId} ${currentIsIsolated ? "RESTORED" : "ISOLATED"} from Toll-Free UI -> Sent to Digital Twin.`);
     fetchTowersStatus();
   } catch (e) {
@@ -433,21 +516,19 @@ async function toggleTowerIsolation(towerId, currentIsIsolated) {
   }
 }
 
-// Shortcut to dial tower immediately on webphone
+// One-click quick dial a specific tower on the hotline
 function quickDialTower(towerNum) {
   if (!callActive) {
     startCall().then(() => {
-      // Step 1: select English
-      setTimeout(() => handleKeyPress("2"), 500);
-      // Step 2: query tower
-      setTimeout(() => handleKeyPress(towerNum), 1200);
+      setTimeout(() => handleKeyPress("2"), 500);       // Select English
+      setTimeout(() => handleKeyPress(towerNum), 1200);   // Select Tower
     });
   } else {
     handleKeyPress(towerNum);
   }
 }
 
-// Make functions accessible to window for inline onclick handlers
+// Make accessible to window for inline onclick handlers
 window.toggleTowerIsolation = toggleTowerIsolation;
 window.quickDialTower = quickDialTower;
 
@@ -455,8 +536,8 @@ window.quickDialTower = quickDialTower;
 // Event Listeners
 // ──────────────────────────────────────────────
 
-btnStartCall.addEventListener("click", startCall);
-btnHangup.addEventListener("click", hangupCall);
+if (btnStartCall) btnStartCall.addEventListener("click", startCall);
+if (btnHangup) btnHangup.addEventListener("click", hangupCall);
 
 document.querySelectorAll(".key-btn").forEach(btn => {
   btn.addEventListener("click", () => {
@@ -465,7 +546,6 @@ document.querySelectorAll(".key-btn").forEach(btn => {
   });
 });
 
-// Keyboard number shortcuts
 window.addEventListener("keydown", (e) => {
   const allowed = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "*", "#"];
   if (allowed.includes(e.key)) {
@@ -478,25 +558,14 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
-btnRefreshTowers.addEventListener("click", fetchTowersStatus);
-btnClearLog.addEventListener("click", () => {
-  transcriptLog.innerHTML = `<div class="log-entry system"><span class="time">--:--</span><span class="msg">Log cleared.</span></div>`;
-});
-
-btnCopyWebhook.addEventListener("click", () => {
-  const url = window.location.origin + "/ivr/welcome";
-  navigator.clipboard.writeText(url).then(() => {
-    btnCopyWebhook.textContent = "Copied!";
-    setTimeout(() => { btnCopyWebhook.textContent = "Copy"; }, 2000);
+if (btnClearLog) {
+  btnClearLog.addEventListener("click", () => {
+    if (transcriptLog) {
+      transcriptLog.innerHTML = `<div class="log-entry system"><span class="time">&gt;</span><span class="msg">Log cleared.</span></div>`;
+    }
   });
-});
-
-// Update webhook url text to current host
-if (webhookUrlSpan) {
-  webhookUrlSpan.textContent = window.location.origin + "/ivr/welcome";
 }
 
 // Initial Load and Fast 1.5s Live Sync with Digital Twin
 fetchTowersStatus();
 setInterval(fetchTowersStatus, 1500);
-
