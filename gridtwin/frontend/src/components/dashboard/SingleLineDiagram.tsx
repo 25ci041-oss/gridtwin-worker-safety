@@ -618,19 +618,19 @@ export const SingleLineDiagram: React.FC = () => {
             <div className="flex items-center gap-2 shrink-0">
               <button
                 onClick={turnAllTowersOn}
-                className="px-3.5 py-1.5 rounded-full text-xs font-black bg-emerald-500 hover:bg-emerald-400 text-slate-950 flex items-center gap-1.5 shadow-md shadow-emerald-500/25 transition-all active:scale-95"
+                className="px-4 py-2 rounded-full text-xs sm:text-sm font-black bg-emerald-500 hover:bg-emerald-400 text-slate-950 flex items-center gap-1.5 shadow-md shadow-emerald-500/25 transition-all active:scale-95"
                 title="Energize ALL 5 towers (Powers relays and turns ON all tower LEDs)"
               >
-                <CheckCircle2 className="w-3.5 h-3.5" />
+                <CheckCircle2 className="w-4 h-4" />
                 <span>ALL ON</span>
               </button>
 
               <button
                 onClick={turnAllTowersOff}
-                className="px-3.5 py-1.5 rounded-full text-xs font-black bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center gap-1.5 shadow-sm transition-all active:scale-95"
+                className="px-4 py-2 rounded-full text-xs sm:text-sm font-black bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center gap-1.5 shadow-sm transition-all active:scale-95"
                 title="Isolate / Turn OFF ALL 5 towers"
               >
-                <Power className="w-3.5 h-3.5 text-slate-400" />
+                <Power className="w-4 h-4 text-slate-400" />
                 <span>ALL OFF</span>
               </button>
             </div>
@@ -650,7 +650,7 @@ export const SingleLineDiagram: React.FC = () => {
 
             <button
               onClick={toggleBypassSwitch}
-              className={`px-3.5 py-1.5 rounded-full text-xs font-mono font-bold flex items-center gap-1.5 border transition-all active:scale-95 shrink-0 ${
+              className={`px-4 py-2 rounded-full text-xs sm:text-sm font-mono font-bold flex items-center gap-2 border transition-all active:scale-95 shrink-0 ${
                 isBypassClosed
                   ? 'bg-emerald-950/90 text-emerald-300 border-emerald-500/70 shadow-sm shadow-emerald-500/20'
                   : 'bg-cyan-950/40 text-cyan-300 border-cyan-500/60 hover:bg-cyan-900/50'
@@ -674,19 +674,19 @@ export const SingleLineDiagram: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex items-center gap-1.5 overflow-x-auto justify-end flex-1">
+            <div className="flex items-center gap-2 overflow-x-auto justify-end flex-1">
               {sections.map((sec) => {
                 const tId = sec.id;
                 const isThisIsolated = isoList.includes(tId);
                 return (
                   <div
                     key={tId}
-                    className="flex flex-col items-center gap-1 px-2 py-1 rounded-lg bg-slate-950/80 border border-slate-800 min-w-[46px]"
+                    className="flex flex-col items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-950/80 border border-slate-800 min-w-[50px]"
                   >
-                    <span className="text-xs font-mono font-extrabold text-slate-300">{tId}</span>
+                    <span className="text-xs font-mono font-black text-slate-300">{tId}</span>
                     <button
                       onClick={() => isolateTower(tId)}
-                      className={`px-2.5 py-0.5 rounded-full text-xs font-black font-mono tracking-wider transition-all active:scale-95 ${
+                      className={`px-3 py-1 rounded-full text-xs font-black font-mono tracking-wider transition-all active:scale-95 ${
                         !isThisIsolated
                           ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-sm shadow-emerald-500/30'
                           : 'bg-rose-600 hover:bg-rose-500 text-white shadow-sm shadow-rose-500/30 ring-1 ring-rose-400'
