@@ -89,20 +89,6 @@ export const LeftSidebar: React.FC = () => {
 
       {/* Sidebar Bottom Widgets */}
       <div className="mt-auto flex flex-col gap-2 pt-4">
-        {/* Project Card */}
-        <div className="bg-[#0b132b]/90 border border-slate-800/90 rounded-2xl p-3 sm:p-3.5 shadow-md">
-          <div className="flex items-center gap-2 mb-1">
-            <Layers className="w-4 h-4 text-cyan-400" />
-            <span className="text-xs sm:text-sm font-black text-slate-200 tracking-wide">Project</span>
-          </div>
-          <p className="text-xs sm:text-sm text-slate-200 font-semibold truncate">
-            Distribution Digital Twin Lab
-          </p>
-          <span className="text-[11px] sm:text-xs text-slate-400 font-mono block mt-1">
-            v1.0.0
-          </span>
-        </div>
-
         {/* System Running Pill */}
         <div className="bg-[#0b132b]/90 border border-slate-800/90 rounded-2xl p-3 sm:p-3.5 flex items-center justify-between shadow-md">
           <div>
