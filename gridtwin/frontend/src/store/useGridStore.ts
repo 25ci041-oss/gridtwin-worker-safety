@@ -14,7 +14,13 @@ import {
   INA219Telemetry
 } from '../types';
  
-const API_BASE = (import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const API_BASE = (
+  import.meta.env.VITE_BACKEND_URL || 
+  import.meta.env.VITE_API_BASE_URL || 
+  (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')
+    ? 'https://gridtwin-backend.onrender.com'
+    : '')
+).replace(/\/$/, '');
 
 interface GridState {
   // Topology

@@ -277,11 +277,11 @@ hardware_state = {
     "last_heartbeat_at": None,
     "roundtrip_latency_ms": 18,
     "output_states": {
-        "T1": "UNKNOWN",
-        "T2": "UNKNOWN",
-        "T3": "UNKNOWN",
-        "T4": "UNKNOWN",
-        "T5": "UNKNOWN",
+        "T1": "ON",
+        "T2": "ON",
+        "T3": "ON",
+        "T4": "ON",
+        "T5": "ON",
     },
     "relay_pins": {
         "T1": 13,
@@ -1202,14 +1202,14 @@ async def send_hardware_command(req: HardwareCommandRequest):
 @app.post("/api/hardware/isolate/{tower_id}")
 async def isolate_tower_endpoint(tower_id: str):
     """
-    Dedicated endpoint to ISOLATE a single tower (e.g. Tower 3).
-    Turns off the tower's relay output while keeping other towers in their current states.
+    Dedicated endpoint to ISOLATE a single tower (e.g. Tower 3 or Tower 4).
+    Turns off the tower's relay output and opens simulated switch.
     """
     tid = tower_id.upper()
     if tid not in ["T1", "T2", "T3", "T4", "T5"]:
         raise HTTPException(status_code=400, detail=f"Invalid tower ID {tower_id}. Must be T1-T5.")
     
-    # Synchronize authoritative state immediately for instant IVR telephone & 3D UI updates
+    # 1. Synchronize authoritative state immediately for instant IVR telephone & 3D UI updates
     hardware_state["output_states"][tid] = "OFF"
     sw_map = {"T1": "SW1", "T2": "SW2", "T3": "SW3", "T4": "SW4", "T5": "SW5"}
     if tid in sw_map:
@@ -1218,13 +1218,40 @@ async def isolate_tower_endpoint(tower_id: str):
         except Exception:
             pass
     
-    return await send_physical_command(PhysicalCommandRequest(
-        device_id="esp32-gridtwin-001",
-        output_id=tid,
-        requested_state="OFF",
-        action="ISOLATE",
-        timeout_seconds=15,
-    ))
+    # 2. Broadcast immediately to WebSocket clients (3D Lab and dashboards)
+    try:
+        await ws_manager.broadcast("tower_isolated", {
+            "tower_id": tid,
+            "state": "OFF",
+            "is_isolated": True,
+            "output_states": hardware_state["output_states"]
+        })
+    except Exception:
+        pass
+
+    # 3. Dispatch to physical ESP32 if online
+    msg = "Tower isolated in digital twin."
+    if mqtt_service.is_connected:
+        try:
+            res = await send_physical_command(PhysicalCommandRequest(
+                device_id="esp32-gridtwin-001",
+                output_id=tid,
+                requested_state="OFF",
+                action="ISOLATE",
+                timeout_seconds=15,
+            ))
+            msg = res.get("message", msg)
+        except Exception as e:
+            logger.info(f"Physical MQTT notice: {e}")
+
+    return {
+        "status": "SUCCESS",
+        "tower_id": tid,
+        "is_isolated": True,
+        "output_state": "OFF",
+        "message": msg,
+        "output_states": hardware_state["output_states"]
+    }
 
 
 @app.post("/api/v1/hardware/restore/{tower_id}")
@@ -1232,13 +1259,13 @@ async def isolate_tower_endpoint(tower_id: str):
 async def restore_tower_endpoint(tower_id: str):
     """
     Dedicated endpoint to RESTORE a single tower.
-    Energizes the tower's relay output.
+    Energizes the tower's relay output and closes simulated switch.
     """
     tid = tower_id.upper()
     if tid not in ["T1", "T2", "T3", "T4", "T5"]:
         raise HTTPException(status_code=400, detail=f"Invalid tower ID {tower_id}. Must be T1-T5.")
     
-    # Synchronize authoritative state immediately for instant IVR telephone & 3D UI updates
+    # 1. Synchronize authoritative state immediately for instant IVR telephone & 3D UI updates
     hardware_state["output_states"][tid] = "ON"
     sw_map = {"T1": "SW1", "T2": "SW2", "T3": "SW3", "T4": "SW4", "T5": "SW5"}
     if tid in sw_map:
@@ -1247,13 +1274,40 @@ async def restore_tower_endpoint(tower_id: str):
         except Exception:
             pass
     
-    return await send_physical_command(PhysicalCommandRequest(
-        device_id="esp32-gridtwin-001",
-        output_id=tid,
-        requested_state="ON",
-        action="RESTORE",
-        timeout_seconds=15,
-    ))
+    # 2. Broadcast immediately to WebSocket clients
+    try:
+        await ws_manager.broadcast("tower_restored", {
+            "tower_id": tid,
+            "state": "ON",
+            "is_isolated": False,
+            "output_states": hardware_state["output_states"]
+        })
+    except Exception:
+        pass
+
+    # 3. Dispatch to physical ESP32 if online
+    msg = "Tower restored in digital twin."
+    if mqtt_service.is_connected:
+        try:
+            res = await send_physical_command(PhysicalCommandRequest(
+                device_id="esp32-gridtwin-001",
+                output_id=tid,
+                requested_state="ON",
+                action="RESTORE",
+                timeout_seconds=15,
+            ))
+            msg = res.get("message", msg)
+        except Exception as e:
+            logger.info(f"Physical MQTT notice: {e}")
+
+    return {
+        "status": "SUCCESS",
+        "tower_id": tid,
+        "is_isolated": False,
+        "output_state": "ON",
+        "message": msg,
+        "output_states": hardware_state["output_states"]
+    }
 
 
 @app.post("/api/v1/hardware/set-all")

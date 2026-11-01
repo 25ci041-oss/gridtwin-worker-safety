@@ -91,15 +91,15 @@ class GridTwinClient:
         tower_id = tower_meta["id"]  # e.g., "T1"
         node_id = f"N_{tower_id}"    # e.g., "N_T1"
 
-        # 1. First priority: Check physical hardware state
+        # 1. First priority: Check physical hardware & digital twin output state
         hw = await self.fetch_hardware_status()
         if hw and "output_states" in hw:
             outputs = hw.get("output_states", {})
-            out_state = outputs.get(tower_id, "UNKNOWN")
+            out_state = str(outputs.get(tower_id, "UNKNOWN")).upper()
             
-            # If the relay output is reported as ON/OFF
-            if out_state in ["ON", "OFF"]:
-                is_isolated = (out_state == "OFF")
+            # If the output is reported as ON, OFF, or ISOLATED
+            if out_state in ["ON", "OFF", "ISOLATED"]:
+                is_isolated = (out_state in ["OFF", "ISOLATED"])
                 is_energized = (out_state == "ON")
                 
                 # Fetch sensor telemetry if active
@@ -129,9 +129,13 @@ class GridTwinClient:
         if sim and "energized_nodes" in sim:
             energized_nodes = sim.get("energized_nodes", [])
             de_energized_nodes = sim.get("de_energized_nodes", [])
+            sw_states = sim.get("switch_states", {})
             
-            is_energized = (node_id in energized_nodes)
-            is_isolated = not is_energized or (node_id in de_energized_nodes)
+            sw_id = f"SW{tower_number}"
+            is_sw_open = (sw_states.get(sw_id) == "OPEN")
+            
+            is_energized = (node_id in energized_nodes) and not is_sw_open
+            is_isolated = not is_energized or (node_id in de_energized_nodes) or is_sw_open
             
             current_ma = 145.0 if is_energized else 0.0
             voltage_v = 5.0 if is_energized else 0.0
@@ -146,7 +150,7 @@ class GridTwinClient:
                 "voltage_v": voltage_v,
                 "source": "simulation",
                 "device_status": "SIMULATED",
-                "raw_state": "ENERGIZED" if is_energized else "DE_ENERGIZED",
+                "raw_state": "ISOLATED" if is_isolated else "ENERGIZED",
             }
 
         # 3. Third priority: Graceful fallback so caller gets an immediate valid response

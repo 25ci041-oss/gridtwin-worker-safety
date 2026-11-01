@@ -24,7 +24,13 @@ export function App() {
     let ws: WebSocket | null = null;
     let wsReconnectTimeout: any = null;
 
-    const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+    const BACKEND_URL = (
+      import.meta.env.VITE_BACKEND_URL || 
+      import.meta.env.VITE_API_BASE_URL || 
+      (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')
+        ? 'https://gridtwin-backend.onrender.com'
+        : '')
+    ).replace(/\/$/, '');
 
     // Initial hardware state sync
     fetchHardwareStatus();
