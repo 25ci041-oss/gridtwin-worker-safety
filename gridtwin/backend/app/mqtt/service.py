@@ -46,15 +46,18 @@ class MQTTService:
             return
 
         try:
+            import uuid
+            # Ensure unique MQTT client ID so public broker does not disconnect on duplicate ID
+            cid = f"{settings.mqtt_client_id}-{uuid.uuid4().hex[:6]}" if settings.mqtt_client_id else f"gridtwin-{uuid.uuid4().hex[:6]}"
             if hasattr(mqtt, "CallbackAPIVersion"):
                 self.client = mqtt.Client(
                     mqtt.CallbackAPIVersion.VERSION1,
-                    client_id=settings.mqtt_client_id,
+                    client_id=cid,
                     protocol=mqtt.MQTTv311,
                 )
             else:
                 self.client = mqtt.Client(
-                    client_id=settings.mqtt_client_id,
+                    client_id=cid,
                     protocol=mqtt.MQTTv311,
                 )
             

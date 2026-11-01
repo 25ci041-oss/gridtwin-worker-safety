@@ -586,8 +586,20 @@ async def _process_device_status(device_id: str, payload: dict):
 
 
 # ──────────────────────────────────────────────
-# Health Endpoints
+# Health & Root Endpoints
 # ──────────────────────────────────────────────
+
+@app.api_route("/", methods=["GET", "HEAD"])
+async def root():
+    """Root endpoint for Render health checks and browser confirmation."""
+    return {
+        "status": "healthy",
+        "service": "gridtwin-backend",
+        "version": settings.app_version,
+        "message": "GRIDTWIN Digital Twin Backend API is running.",
+        "docs_url": "/docs",
+        "health_url": "/api/v1/health"
+    }
 
 @app.get("/api/v1/health")
 async def health_check():
