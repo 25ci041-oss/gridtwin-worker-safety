@@ -193,7 +193,7 @@ function stopTimer() {
 
 async function startCall() {
   try {
-    addTranscript("caller", "📞 Dialing 1800-419-GRID (Toll-Free)...");
+    addTranscript("caller", "📞 Dialing +1 573 859 5176 (Toll-Free)...");
     if (callStatusText) callStatusText.textContent = "Calling...";
     if (callStatusDot) callStatusDot.className = "status-dot-green pulsing";
     btnStartCall.disabled = true;
@@ -320,26 +320,26 @@ function getTowerSvg(isIsolated) {
       <svg class="pylon-graphic" viewBox="0 0 160 120" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <linearGradient id="g-mound-iso" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#450a0a" />
-            <stop offset="100%" stop-color="#1e0505" />
+            <stop offset="0%" stop-color="#7f1d1d" />
+            <stop offset="100%" stop-color="#450a0a" />
           </linearGradient>
           <filter id="glow-iso" x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur stdDeviation="2.2" result="blur" />
+            <feGaussianBlur stdDeviation="2.5" result="blur" />
             <feComposite in="SourceGraphic" in2="blur" operator="over" />
           </filter>
         </defs>
-        <!-- Ground Base Mound -->
-        <ellipse cx="80" cy="112" rx="68" ry="7" fill="url(#g-mound-iso)" />
-        <path d="M15 112 Q80 108 145 112" stroke="#ef4444" stroke-width="2" fill="none" opacity="0.7" />
+        <!-- Ground Base Mound (Red Alert) -->
+        <ellipse cx="80" cy="112" rx="68" ry="7" fill="url(#g-mound-iso)" opacity="0.95" />
+        <path d="M15 112 Q80 108 145 112" stroke="#ef4444" stroke-width="2.2" fill="none" opacity="0.85" />
         
-        <!-- Disconnected Dashed Power Lines -->
-        <path d="M0 45 L48 49" stroke="#ef4444" stroke-width="1.8" stroke-dasharray="4,4" fill="none" opacity="0.8" />
-        <path d="M112 49 L160 45" stroke="#ef4444" stroke-width="1.8" stroke-dasharray="4,4" fill="none" opacity="0.8" />
-        <path d="M0 65 L40 68" stroke="#ef4444" stroke-width="1.8" stroke-dasharray="4,4" fill="none" opacity="0.8" />
-        <path d="M120 68 L160 65" stroke="#ef4444" stroke-width="1.8" stroke-dasharray="4,4" fill="none" opacity="0.8" />
+        <!-- Disconnected Dashed Power Lines (Red) -->
+        <path d="M0 45 L48 49" stroke="#ef4444" stroke-width="2" stroke-dasharray="4,4" fill="none" opacity="0.9" />
+        <path d="M112 49 L160 45" stroke="#ef4444" stroke-width="2" stroke-dasharray="4,4" fill="none" opacity="0.9" />
+        <path d="M0 65 L40 68" stroke="#ef4444" stroke-width="2" stroke-dasharray="4,4" fill="none" opacity="0.9" />
+        <path d="M120 68 L160 65" stroke="#ef4444" stroke-width="2" stroke-dasharray="4,4" fill="none" opacity="0.9" />
 
-        <!-- Tower Lattice Structure (Muted Alert Red) -->
-        <g stroke="#f87171" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow-iso)">
+        <!-- Tower Lattice Structure (Glowing Intense Red Pylon When Isolated) -->
+        <g stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow-iso)">
           <!-- Main Legs -->
           <line x1="56" y1="112" x2="74" y2="24" />
           <line x1="104" y1="112" x2="86" y2="24" />
@@ -356,10 +356,11 @@ function getTowerSvg(isIsolated) {
           <line x1="64" y1="80" x2="96" y2="80" />
           <line x1="67" y1="65" x2="93" y2="65" />
           <line x1="70" y1="45" x2="90" y2="45" />
+          <line x1="80" y1="8" x2="80" y2="45" stroke-width="1.6" opacity="0.8" />
         </g>
 
-        <!-- Isolation Cut-Off Badge -->
-        <circle cx="80" cy="55" r="14" fill="#7f1d1d" stroke="#ef4444" stroke-width="2" />
+        <!-- Isolation Cut-Off Warning Badge -->
+        <circle cx="80" cy="55" r="14" fill="#991b1b" stroke="#f87171" stroke-width="2" />
         <text x="80" y="60.5" text-anchor="middle" fill="#fee2e2" font-size="13" font-weight="900" font-family="sans-serif">✕</text>
       </svg>
     `;
@@ -368,24 +369,24 @@ function getTowerSvg(isIsolated) {
       <svg class="pylon-graphic" viewBox="0 0 160 120" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <linearGradient id="g-mound-act" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#064e3b" />
-            <stop offset="100%" stop-color="#022c22" />
+            <stop offset="0%" stop-color="#0284c7" />
+            <stop offset="100%" stop-color="#082f49" />
           </linearGradient>
           <filter id="glow-act" x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur stdDeviation="2" result="blur" />
+            <feGaussianBlur stdDeviation="2.2" result="blur" />
             <feComposite in="SourceGraphic" in2="blur" operator="over" />
           </filter>
         </defs>
-        <!-- Ground Base Mound -->
+        <!-- Ground Base Mound (Electric Blue Terrain) -->
         <ellipse cx="80" cy="112" rx="68" ry="7" fill="url(#g-mound-act)" opacity="0.9" />
-        <path d="M15 112 Q80 108 145 112" stroke="#10b981" stroke-width="2.2" fill="none" opacity="0.85" />
+        <path d="M15 112 Q80 108 145 112" stroke="#38bdf8" stroke-width="2.2" fill="none" opacity="0.85" />
         
-        <!-- Continuous High-Voltage Power Lines -->
-        <path d="M0 45 Q80 50 160 45" stroke="#38bdf8" stroke-width="1.8" fill="none" opacity="0.85" />
-        <path d="M0 65 Q80 70 160 65" stroke="#38bdf8" stroke-width="1.8" fill="none" opacity="0.85" />
+        <!-- Continuous High-Voltage Power Lines (Cyan/Blue) -->
+        <path d="M0 45 Q80 50 160 45" stroke="#38bdf8" stroke-width="2" fill="none" opacity="0.9" />
+        <path d="M0 65 Q80 70 160 65" stroke="#38bdf8" stroke-width="2" fill="none" opacity="0.9" />
 
-        <!-- Tower Lattice Structure (Glowing Neon Red / Coral Pylon) -->
-        <g stroke="#ff3355" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow-act)">
+        <!-- Tower Lattice Structure (Electric Blue Pylon - Changes to Red on Isolation) -->
+        <g stroke="#00d2ff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow-act)">
           <!-- Main Legs -->
           <line x1="56" y1="112" x2="74" y2="24" />
           <line x1="104" y1="112" x2="86" y2="24" />
@@ -403,7 +404,7 @@ function getTowerSvg(isIsolated) {
           <line x1="67" y1="65" x2="93" y2="65" />
           <line x1="70" y1="45" x2="90" y2="45" />
           <!-- Vertical center apex -->
-          <line x1="80" y1="8" x2="80" y2="45" stroke-width="1.5" opacity="0.7" />
+          <line x1="80" y1="8" x2="80" y2="45" stroke-width="1.6" opacity="0.8" />
         </g>
       </svg>
     `;

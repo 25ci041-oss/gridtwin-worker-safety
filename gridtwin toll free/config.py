@@ -9,9 +9,9 @@ load_dotenv()
 PORT = int(os.getenv("TOLLFREE_PORT", "5001"))
 HOST = os.getenv("TOLLFREE_HOST", "0.0.0.0")
 
-# Toll-Free Phone Number Display
-TOLL_FREE_NUMBER = os.getenv("TOLL_FREE_NUMBER", "1800-419-GRID")
-TOLL_FREE_E164 = os.getenv("TOLL_FREE_E164", "+18004194743")
+# Toll-Free Phone Number Display (Real Twilio Assigned Number)
+TOLL_FREE_NUMBER = os.getenv("TOLL_FREE_NUMBER", "+1 573 859 5176")
+TOLL_FREE_E164 = os.getenv("TOLL_FREE_E164", "+15738595176")
 
 # GridTwin Backend Connection
 GRIDTWIN_BACKEND_URL = os.getenv("GRIDTWIN_BACKEND_URL")

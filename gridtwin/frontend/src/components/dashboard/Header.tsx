@@ -75,10 +75,10 @@ export const Header: React.FC = () => {
           target="_blank"
           rel="noopener noreferrer"
           className="hidden md:flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-indigo-950/80 border border-indigo-500/50 text-indigo-300 hover:bg-indigo-900/80 hover:text-white transition-all text-xs md:text-sm font-mono font-bold shadow-sm shadow-indigo-500/20"
-          title="Open Toll-Free IVR Telephone Helpline & Dialpad (1800-419-GRID)"
+          title="Open Toll-Free IVR Telephone Helpline & Dialpad (+1 573 859 5176)"
         >
           <PhoneCall className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
-          <span>1800-419-GRID Toll-Free</span>
+          <span>+1 573 859 5176 Helpline</span>
         </a>
 
         {/* Mode Selector Pill */}
