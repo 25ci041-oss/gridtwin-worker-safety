@@ -80,19 +80,16 @@ class GridTwinClient:
             self._mark_offline()
         return None
 
-    async def get_tower_status(self, tower_number: str) -> Dict[str, Any]:
-        """
-        Get the live status of a specific tower (1 to 5).
-        """
+    def _evaluate_tower_state(self, tower_number: str, hw: Optional[Dict], sim: Optional[Dict]) -> Dict[str, Any]:
         tower_meta = TOWERS.get(str(tower_number))
         if not tower_meta:
             raise ValueError(f"Invalid tower number {tower_number}. Must be 1 to 5.")
 
         tower_id = tower_meta["id"]  # e.g., "T1"
         node_id = f"N_{tower_id}"    # e.g., "N_T1"
+        sw_id = f"SW{tower_number}"
 
         # 1. First priority: Check physical hardware & digital twin output state
-        hw = await self.fetch_hardware_status()
         if hw and "output_states" in hw:
             outputs = hw.get("output_states", {})
             out_state = str(outputs.get(tower_id, "UNKNOWN")).upper()
@@ -125,14 +122,12 @@ class GridTwinClient:
                 }
 
         # 2. Second priority: Check digital twin simulation
-        sim = await self.fetch_simulation_connectivity()
         if sim and "energized_nodes" in sim:
             energized_nodes = sim.get("energized_nodes", [])
             de_energized_nodes = sim.get("de_energized_nodes", [])
             sw_states = sim.get("switch_states", {})
             
-            sw_id = f"SW{tower_number}"
-            is_sw_open = (sw_states.get(sw_id) == "OPEN")
+            is_sw_open = (sw_states.get(sw_id) == "OPEN") or (sw_states.get(f"SW-T{tower_number}") == "OPEN")
             
             is_energized = (node_id in energized_nodes) and not is_sw_open
             is_isolated = not is_energized or (node_id in de_energized_nodes) or is_sw_open
@@ -168,12 +163,50 @@ class GridTwinClient:
             "raw_state": "ISOLATED" if fb["is_isolated"] else "NORMAL",
         }
 
+    async def get_tower_status(self, tower_number: str) -> Dict[str, Any]:
+        """Get the live status of a specific tower (1 to 5)."""
+        hw = await self.fetch_hardware_status()
+        sim = await self.fetch_simulation_connectivity()
+        return self._evaluate_tower_state(tower_number, hw, sim)
+
     async def get_all_towers_status(self) -> Dict[str, Any]:
-        """Retrieve status for all 5 towers simultaneously."""
+        """Retrieve status for all 5 towers simultaneously with single batch fetch."""
+        hw = await self.fetch_hardware_status()
+        sim = await self.fetch_simulation_connectivity()
         results = {}
         for num in ["1", "2", "3", "4", "5"]:
-            results[num] = await self.get_tower_status(num)
+            results[num] = self._evaluate_tower_state(num, hw, sim)
         return results
+
+    async def isolate_tower(self, tower_id: str) -> Dict[str, Any]:
+        """Dispatch isolation command to GridTwin backend."""
+        tid = tower_id.upper()
+        if not tid.startswith("T"):
+            tid = f"T{tid}"
+        url = f"{self.base_url}/api/v1/hardware/isolate/{tid}"
+        try:
+            async with httpx.AsyncClient(timeout=self._http_timeout) as client:
+                resp = await client.post(url)
+                if resp.status_code == 200:
+                    return resp.json()
+        except Exception as e:
+            logger.error(f"Error dispatching isolate to {url}: {e}")
+        return {"status": "ERROR", "message": f"Could not reach {url}"}
+
+    async def restore_tower(self, tower_id: str) -> Dict[str, Any]:
+        """Dispatch restore command to GridTwin backend."""
+        tid = tower_id.upper()
+        if not tid.startswith("T"):
+            tid = f"T{tid}"
+        url = f"{self.base_url}/api/v1/hardware/restore/{tid}"
+        try:
+            async with httpx.AsyncClient(timeout=self._http_timeout) as client:
+                resp = await client.post(url)
+                if resp.status_code == 200:
+                    return resp.json()
+        except Exception as e:
+            logger.error(f"Error dispatching restore to {url}: {e}")
+        return {"status": "ERROR", "message": f"Could not reach {url}"}
 
 
 # Global singleton instance

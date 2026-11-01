@@ -344,34 +344,112 @@ async function fetchTowersStatus() {
 function renderTowerCards(towers) {
   if (!towers || Object.keys(towers).length === 0) return;
 
+  const isolatedList = [];
+  const activeList = [];
+  for (const [num, t] of Object.entries(towers)) {
+    if (t.is_isolated) {
+      isolatedList.push(`Tower ${num} (${t.tower_id})`);
+    } else {
+      activeList.push(`T${num}`);
+    }
+  }
+
+  // Update Grid Summary Banner
+  const alertBar = document.getElementById("gridStatusAlertBar");
+  const alertIcon = document.getElementById("gridAlertIcon");
+  const alertText = document.getElementById("gridAlertText");
+  const alertTag = document.getElementById("gridAlertTag");
+  if (alertBar && alertText) {
+    if (isolatedList.length > 0) {
+      alertBar.className = "grid-status-alert-bar has-isolation";
+      if (alertIcon) alertIcon.textContent = "🚨";
+      alertText.innerHTML = `<strong>FAULT ISOLATION DETECTED:</strong> ${isolatedList.join(", ")} is currently ISOLATED. Power supply is cut off. Live telemetry in sync with 3D Twin.`;
+      if (alertTag) alertTag.textContent = `${isolatedList.length} ISOLATED`;
+    } else {
+      alertBar.className = "grid-status-alert-bar all-normal";
+      if (alertIcon) alertIcon.textContent = "⚡";
+      alertText.innerHTML = `<strong>ALL TOWERS NORMAL:</strong> 5/5 towers active and transmitting power. Normal line flow.`;
+      if (alertTag) alertTag.textContent = `5/5 ACTIVE`;
+    }
+  }
+
   let html = "";
   for (const [num, t] of Object.entries(towers)) {
     const isIsolated = t.is_isolated;
     const cardClass = isIsolated ? "isolated" : "normal";
     const badgeClass = isIsolated ? "badge-isolated" : "badge-normal";
-    const badgeText = isIsolated ? "ISOLATED" : "ACTIVE";
-    const currentText = isIsolated ? "0.0 mA (Cut Off)" : `${t.current_ma} mA`;
+    const badgeText = isIsolated ? "🚨 ISOLATED" : "⚡ ACTIVE";
+    const currentHtml = isIsolated 
+      ? `<strong style="color: #ef4444; font-weight: 800;">0.0 mA (CUT OFF)</strong>`
+      : `<strong style="color: #10b981; font-weight: 800;">${t.current_ma} mA (FLOWING)</strong>`;
+    const statusNote = isIsolated
+      ? `<div style="font-size: 11px; color: #f87171; margin-top: 4px; font-weight: 600;">⚠️ Power Line Cut Off / Isolated</div>`
+      : `<div style="font-size: 11px; color: #34d399; margin-top: 4px;">✔ Live Transmission Active</div>`;
+
+    const toggleBtnText = isIsolated ? "⚡ Restore" : "🚫 Isolate";
+    const toggleBtnClass = isIsolated ? "restore-btn" : "isolate-btn";
 
     html += `
-      <div class="tower-card ${cardClass}">
+      <div class="tower-card ${cardClass}" id="card-tower-${num}">
         <div class="tower-card-top">
           <span class="tower-title">Tower ${t.tower_number} (${t.tower_id})</span>
           <span class="tower-badge ${badgeClass}">${badgeText}</span>
         </div>
         <div class="tower-metric">
-          Current: <strong>${currentText}</strong>
+          Line Current: ${currentHtml}
         </div>
         <div class="tower-metric">
-          Voltage: <strong>${t.voltage_v} V</strong>
+          Bus Voltage: <strong>${t.voltage_v} V</strong>
         </div>
+        ${statusNote}
         <div class="tower-metric" style="font-size: 10px; color: var(--text-muted); margin-top: 6px;">
-          Source: ${t.source}
+          Telemetry Source: ${t.source} (${t.device_status})
+        </div>
+        <div class="tower-card-actions">
+          <button class="tower-card-btn btn-card-dial" onclick="quickDialTower('${num}')" title="Call Toll-Free hotline and query Tower ${num}">
+            📞 Dial T${num}
+          </button>
+          <button class="tower-card-btn btn-card-toggle ${toggleBtnClass}" onclick="toggleTowerIsolation('${t.tower_id}', ${isIsolated})" title="2-way toggle isolation with 3D Twin">
+            ${toggleBtnText}
+          </button>
         </div>
       </div>
     `;
   }
   towerCardsContainer.innerHTML = html;
 }
+
+// 2-Way Command Dispatch from Toll-Free UI to Digital Twin
+async function toggleTowerIsolation(towerId, currentIsIsolated) {
+  const endpoint = currentIsIsolated ? `/api/towers/${towerId}/restore` : `/api/towers/${towerId}/isolate`;
+  try {
+    const res = await fetch(endpoint, { method: "POST" });
+    const result = await res.json();
+    addTranscript("system", `[2-WAY SYNC] Tower ${towerId} ${currentIsIsolated ? "RESTORED" : "ISOLATED"} from Toll-Free UI -> Sent to Digital Twin.`);
+    fetchTowersStatus();
+  } catch (e) {
+    console.error("Toggle error:", e);
+    addTranscript("alert", `Failed to command Tower ${towerId}: ${e.message}`);
+  }
+}
+
+// Shortcut to dial tower immediately on webphone
+function quickDialTower(towerNum) {
+  if (!callActive) {
+    startCall().then(() => {
+      // Step 1: select English
+      setTimeout(() => handleKeyPress("2"), 500);
+      // Step 2: query tower
+      setTimeout(() => handleKeyPress(towerNum), 1200);
+    });
+  } else {
+    handleKeyPress(towerNum);
+  }
+}
+
+// Make functions accessible to window for inline onclick handlers
+window.toggleTowerIsolation = toggleTowerIsolation;
+window.quickDialTower = quickDialTower;
 
 // ──────────────────────────────────────────────
 // Event Listeners
@@ -418,7 +496,7 @@ if (webhookUrlSpan) {
   webhookUrlSpan.textContent = window.location.origin + "/ivr/welcome";
 }
 
-// Initial Load
+// Initial Load and Fast 1.5s Live Sync with Digital Twin
 fetchTowersStatus();
-setInterval(fetchTowersStatus, 4000);
+setInterval(fetchTowersStatus, 1500);
 

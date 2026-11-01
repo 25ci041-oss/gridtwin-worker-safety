@@ -254,6 +254,18 @@ async def get_all_towers():
     return await gridtwin_client.get_all_towers_status()
 
 
+@app.post("/api/towers/{tower_id}/isolate")
+async def isolate_tower_api(tower_id: str):
+    """Allows isolating a tower directly from Toll-Free, syncing live back to 3D Twin."""
+    return await gridtwin_client.isolate_tower(tower_id)
+
+
+@app.post("/api/towers/{tower_id}/restore")
+async def restore_tower_api(tower_id: str):
+    """Allows restoring a tower directly from Toll-Free, syncing live back to 3D Twin."""
+    return await gridtwin_client.restore_tower(tower_id)
+
+
 @app.get("/api/tts/speak")
 async def tts_speak(text: str = Query(...), lang: str = Query("en")):
     """Dynamically generate and return neural MP3 audio URL for any phrase."""

@@ -20,6 +20,11 @@
         <p class="subtitle">Multi-Lingual IVR for Power Grid Tower Status & Fault Isolation Reporting</p>
       </div>
       <div class="quick-status">
+        <a href="https://gridtwin-iota.vercel.app" target="_blank" rel="noopener noreferrer" class="link-twin-btn" title="Open Main 3D Digital Twin Lab on Vercel">
+          <span class="icon">🌐</span>
+          <span>Open 3D Digital Twin Lab</span>
+          <span class="ext-arrow">↗</span>
+        </a>
         <div class="status-chip" id="backendStatusChip">
           <span class="status-dot online"></span>
           <span id="backendStatusText">Twin Backend: Connected</span>
@@ -152,9 +157,27 @@
         <!-- Live Towers Status Cards -->
         <div class="panel-box">
           <div class="panel-header">
-            <h3>⚡ Live Towers Telemetry (GridTwin Twin)</h3>
-            <button class="btn-refresh" id="btnRefreshTowers" title="Refresh state">🔄</button>
+            <div>
+              <h3>⚡ Live Towers Telemetry &amp; Isolation Status</h3>
+              <p class="panel-sub" style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
+                Direct 2-Way Live Sync with 3D Twin &amp; Hardware
+              </p>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <span class="live-pill"><span class="live-beacon"></span> LIVE SYNC (1.5s)</span>
+              <button class="btn-refresh" id="btnRefreshTowers" title="Refresh state">🔄</button>
+            </div>
           </div>
+
+          <!-- Dynamic Grid Summary Alert Banner -->
+          <div class="grid-status-alert-bar all-normal" id="gridStatusAlertBar">
+            <div class="alert-content">
+              <span class="alert-icon" id="gridAlertIcon">⚡</span>
+              <span id="gridAlertText">Checking tower network status...</span>
+            </div>
+            <span class="alert-tag" id="gridAlertTag">5/5 ACTIVE</span>
+          </div>
+
           <div class="tower-cards-grid" id="towerCardsContainer">
             <!-- Dynamic Tower Cards Loaded via JS -->
             <div class="loading-spinner">Loading tower data...</div>
