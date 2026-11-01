@@ -71,17 +71,31 @@ export interface ConnectivityResult {
   unserved_demand_kw: number;
 }
 
+export type HardwareMode = 'PHYSICAL' | 'SIMULATION';
+
+export interface INA219Telemetry {
+  bus_voltage_v: number;
+  shunt_voltage_mv: number;
+  current_ma: number;
+  power_mw: number;
+  sensor_status: 'OK' | 'DISCONNECTED' | 'ERROR';
+  recorded_at?: string;
+}
+
 export interface HardwareDevice {
   device_id: string;
   name: string;
-  status: DeviceStatus;
+  status: DeviceStatus | 'UNKNOWN';
   is_registered: boolean;
   is_enabled: boolean;
+  ip_address?: string;
+  wifi_rssi?: number;
   last_seen_at?: string;
   last_heartbeat_at?: string;
   roundtrip_latency_ms?: number;
   firmware_version?: string;
-  output_states: Record<string, 'ON' | 'OFF'>;
+  output_states: Record<string, 'ON' | 'OFF' | 'ISOLATED' | 'UNKNOWN'>;
+  relay_pins?: Record<string, number>;
 }
 
 export interface GridAlert {

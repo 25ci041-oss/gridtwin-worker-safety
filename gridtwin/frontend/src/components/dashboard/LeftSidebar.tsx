@@ -58,9 +58,9 @@ export const LeftSidebar: React.FC = () => {
                   setActiveTab(item.id as any);
                 }
               }}
-              className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl text-sm font-semibold transition-all duration-200 group ${
+              className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl text-sm md:text-base font-bold transition-all duration-200 group ${
                 isActive
-                  ? 'bg-blue-600 text-white shadow-xl shadow-blue-600/30 font-bold'
+                  ? 'bg-blue-600 text-white shadow-xl shadow-blue-600/30'
                   : 'text-slate-300 hover:text-white hover:bg-slate-900/70'
               }`}
             >
@@ -70,11 +70,11 @@ export const LeftSidebar: React.FC = () => {
                     isActive ? 'text-white' : 'text-slate-400 group-hover:text-cyan-400'
                   }`}
                 />
-                <span className="tracking-wide text-sm">{item.label}</span>
+                <span className="tracking-wide text-sm md:text-base font-bold">{item.label}</span>
               </div>
 
               {item.badge && (
-                <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-rose-500 text-white shadow-sm">
+                <span className="text-xs font-black px-2 py-0.5 rounded-full bg-rose-500 text-white shadow-sm">
                   {item.badge}
                 </span>
               )}
@@ -89,12 +89,12 @@ export const LeftSidebar: React.FC = () => {
         <div className="bg-[#0b132b]/90 border border-slate-800/90 rounded-2xl p-3.5 shadow-md">
           <div className="flex items-center gap-2 mb-1">
             <Layers className="w-4 h-4 text-cyan-400" />
-            <span className="text-xs font-bold text-slate-200 tracking-wide">Project</span>
+            <span className="text-xs md:text-sm font-black text-slate-200 tracking-wide">Project</span>
           </div>
-          <p className="text-xs text-slate-300 font-medium">
+          <p className="text-xs md:text-sm text-slate-200 font-semibold">
             Distribution Digital Twin Lab
           </p>
-          <span className="text-[11px] text-slate-500 font-mono block mt-1">
+          <span className="text-xs text-slate-400 font-mono block mt-1">
             v1.0.0
           </span>
         </div>
@@ -104,9 +104,9 @@ export const LeftSidebar: React.FC = () => {
           <div>
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-xs font-bold text-white tracking-wide">System Running</span>
+              <span className="text-xs md:text-sm font-black text-white tracking-wide">System Running</span>
             </div>
-            <span className="text-[11px] text-slate-400 font-medium block mt-1">
+            <span className="text-xs text-slate-300 font-semibold block mt-1">
               ESP32 Connected
             </span>
           </div>

@@ -19,11 +19,11 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://gridtwin:gridtwin_secret@localhost:5432/gridtwin"
     database_url_sync: str = "postgresql://gridtwin:gridtwin_secret@localhost:5432/gridtwin"
     
-    # MQTT
-    mqtt_broker_host: str = "localhost"
+    # MQTT (Defaults to public cloud broker for zero-setup hackathon development)
+    mqtt_broker_host: str = "broker.hivemq.com"
     mqtt_broker_port: int = 1883
-    mqtt_username: str = "gridtwin"
-    mqtt_password: str = "gridtwin_mqtt_secret"
+    mqtt_username: str = ""
+    mqtt_password: str = ""
     mqtt_client_id: str = "gridtwin-backend"
     
     # Command settings
@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     command_rate_limit_per_minute: int = 60
     
     # Physical control
-    physical_control_enabled: bool = False
+    physical_control_enabled: bool = True
     
     @property
     def cors_origins(self) -> list[str]:

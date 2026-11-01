@@ -34,7 +34,7 @@ export const SceneEnvironment: React.FC = () => {
 
       {/* Ground Cyber Grid Plane */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow>
-        <planeGeometry args={[190, 120]} />
+        <planeGeometry args={[260, 160]} />
         <meshStandardMaterial
           color={isNightMode ? '#070b14' : '#1e293b'}
           roughness={0.9}
@@ -44,7 +44,7 @@ export const SceneEnvironment: React.FC = () => {
 
       {/* High-Contrast Grid Lines Helper */}
       <gridHelper
-        args={[180, 90, isNightMode ? '#0ea5e9' : '#475569', isNightMode ? '#1e293b' : '#334155']}
+        args={[240, 120, isNightMode ? '#0ea5e9' : '#475569', isNightMode ? '#1e293b' : '#334155']}
         position={[0, 0.01, 0]}
       />
 

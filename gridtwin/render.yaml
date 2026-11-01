@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: gridtwin-backend
+    runtime: python
+    rootDir: gridtwin/backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: BACKEND_HOST
+        value: 0.0.0.0
+      - key: BACKEND_CORS_ORIGINS
+        value: "*"
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:///gridtwin.db
+      - key: DATABASE_URL_SYNC
+        value: sqlite:///gridtwin.db
+      - key: MQTT_BROKER_HOST
+        value: broker.hivemq.com
+      - key: MQTT_BROKER_PORT
+        value: "1883"
+      - key: MQTT_CLIENT_ID
+        value: gridtwin-backend-render
+
+  - type: web
+    name: gridtwin-tollfree
+    runtime: python
+    rootDir: "gridtwin toll free"
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: GRIDTWIN_BACKEND_URL
+        fromService:
+          type: web
+          name: gridtwin-backend
+          property: host

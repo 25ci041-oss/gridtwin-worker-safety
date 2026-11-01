@@ -5,7 +5,14 @@ import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Callable
-import paho.mqtt.client as mqtt
+
+try:
+    import paho.mqtt.client as mqtt
+    HAS_PAHO = True
+except ImportError:
+    mqtt = None
+    HAS_PAHO = False
+
 from app.core.config import settings
 
 logger = logging.getLogger("gridtwin.mqtt")
@@ -24,7 +31,7 @@ class MQTTService:
     """
 
     def __init__(self):
-        self.client: Optional[mqtt.Client] = None
+        self.client = None
         self.connected = False
         self._on_ack_callback: Optional[Callable] = None
         self._on_status_callback: Optional[Callable] = None
@@ -34,11 +41,22 @@ class MQTTService:
 
     def connect(self):
         """Connect to the MQTT broker."""
+        if not HAS_PAHO or mqtt is None:
+            logger.warning("paho-mqtt is not installed. MQTT service running in dry-run/mock mode.")
+            return
+
         try:
-            self.client = mqtt.Client(
-                client_id=settings.mqtt_client_id,
-                protocol=mqtt.MQTTv311,
-            )
+            if hasattr(mqtt, "CallbackAPIVersion"):
+                self.client = mqtt.Client(
+                    mqtt.CallbackAPIVersion.VERSION1,
+                    client_id=settings.mqtt_client_id,
+                    protocol=mqtt.MQTTv311,
+                )
+            else:
+                self.client = mqtt.Client(
+                    client_id=settings.mqtt_client_id,
+                    protocol=mqtt.MQTTv311,
+                )
             
             if settings.mqtt_username:
                 self.client.username_pw_set(
@@ -149,6 +167,7 @@ class MQTTService:
         requested_state: str,
         command_id: Optional[str] = None,
         timeout_seconds: int = 30,
+        action: Optional[str] = None,
     ) -> dict:
         """
         Send a command to a device via MQTT.
@@ -173,17 +192,19 @@ class MQTTService:
             "created_at": now.isoformat(),
             "expires_at": expires.isoformat(),
         }
+        if action:
+            payload["action"] = action
         
         topic = f"gridtwin/devices/{device_id}/commands"
         
-        result = self.client.publish(topic, json.dumps(payload), qos=1)
-        
-        if result.rc == mqtt.MQTT_ERR_SUCCESS:
-            self._pending_commands[command_id] = payload
-            logger.info(f"Command sent: {command_id} -> {device_id}/{output_id} = {requested_state}")
-        else:
-            logger.error(f"Failed to publish command: {result.rc}")
-            raise RuntimeError(f"MQTT publish failed with code {result.rc}")
+        if self.client:
+            result = self.client.publish(topic, json.dumps(payload), qos=1)
+            if hasattr(result, 'rc') and mqtt and result.rc != mqtt.MQTT_ERR_SUCCESS:
+                logger.error(f"Failed to publish command: {result.rc}")
+                raise RuntimeError(f"MQTT publish failed with code {result.rc}")
+
+        self._pending_commands[command_id] = payload
+        logger.info(f"Command sent: {command_id} -> {device_id}/{output_id} = {requested_state} (action={action})")
         
         return payload
 

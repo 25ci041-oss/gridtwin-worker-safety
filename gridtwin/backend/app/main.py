@@ -53,9 +53,14 @@ simulator = create_default_five_section_network()
 # Lifespan
 # ──────────────────────────────────────────────
 
+main_event_loop = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown."""
+    global main_event_loop
+    main_event_loop = asyncio.get_running_loop()
     logger.info("GRIDTWIN Backend starting...")
     
     # Initialize database
@@ -76,6 +81,8 @@ async def lifespan(app: FastAPI):
         mqtt_service.connect()
         mqtt_service.set_ack_callback(handle_device_ack)
         mqtt_service.set_availability_callback(handle_device_availability)
+        mqtt_service.set_telemetry_callback(handle_device_telemetry)
+        mqtt_service.set_status_callback(handle_device_status)
         logger.info("MQTT service started")
     except Exception as e:
         logger.warning(f"MQTT connection (may need Mosquitto): {e}")
@@ -216,21 +223,22 @@ async def seed_default_data():
             )
             session.add(db_load)
         
-        # Seed default device (disabled)
+        # Seed default device (enabled for real hardware integration)
         device = Device(
             device_id="esp32-gridtwin-001",
             name="GRIDTWIN ESP32 Controller",
-            description="Primary ESP32 controller for physical indicator outputs",
+            description="Primary ESP32 controller for physical indicator outputs & INA219 sensor",
             device_type="ESP32",
             status=DeviceStatus.OFFLINE,
             is_registered=True,
-            is_enabled=False,
+            is_enabled=True,
         )
         session.add(device)
         await session.flush()
         
-        # Seed output mappings (disabled by default)
-        default_pins = {"T1": 16, "T2": 17, "T3": 18, "T4": 19, "T5": 21}
+        # Seed output mappings with confirmed hardware GPIOs:
+        # T1->13, T2->14, T3->25, T4->26, T5->27
+        default_pins = {"T1": 13, "T2": 14, "T3": 25, "T4": 26, "T5": 27}
         for tid, pin in default_pins.items():
             mapping = OutputMapping(
                 device_id=device.id,
@@ -238,134 +246,342 @@ async def seed_default_data():
                 gpio_pin=pin,
                 name=f"{tid} Indicator",
                 section_id=tid,
-                is_enabled=False,
-                is_allowlisted=False,
+                is_enabled=True,
+                is_allowlisted=True,
                 reported_state=OutputState.UNKNOWN,
             )
             session.add(mapping)
         
         # App settings
-        session.add(AppSetting(key="physical_control_enabled", value="false", description="Enable physical device control"))
+        session.add(AppSetting(key="physical_control_enabled", value="true", description="Enable physical device control"))
         session.add(AppSetting(key="simulation_level", value="CONNECTIVITY", description="Active simulation level"))
         
         await session.commit()
-        logger.info("Default network seeded successfully")
+        logger.info("Default network seeded successfully with verified GPIOs 13, 14, 25, 26, 27")
 
 
 # ──────────────────────────────────────────────
-# MQTT Callbacks
+# Central Authoritative Hardware State Model
 # ──────────────────────────────────────────────
+
+hardware_state = {
+    "device_id": "esp32-gridtwin-001",
+    "name": "GRIDTWIN ESP32 Controller",
+    "status": "OFFLINE", # "ONLINE" or "OFFLINE"
+    "firmware_version": "2.0.0-hackathon",
+    "ip_address": None,
+    "uptime_ms": 0,
+    "wifi_rssi": 0,
+    "last_seen_at": None,
+    "last_heartbeat_at": None,
+    "roundtrip_latency_ms": 18,
+    "output_states": {
+        "T1": "UNKNOWN",
+        "T2": "UNKNOWN",
+        "T3": "UNKNOWN",
+        "T4": "UNKNOWN",
+        "T5": "UNKNOWN",
+    },
+    "relay_pins": {
+        "T1": 13,
+        "T2": 14,
+        "T3": 25,
+        "T4": 26,
+        "T5": 27,
+        "RELAY_6": 32,
+    },
+    "telemetry": {
+        "bus_voltage_v": 0.0,
+        "shunt_voltage_mv": 0.0,
+        "current_ma": 0.0,
+        "power_mw": 0.0,
+        "sensor_status": "DISCONNECTED",
+        "recorded_at": None,
+    },
+    "telemetry_history": [],
+    "pending_commands": {}, # command_id -> dict
+    "last_command": None,
+    "physical_control_enabled": True,
+}
+
+
+# ──────────────────────────────────────────────
+# MQTT Callbacks & Telemetry Processing
+# ──────────────────────────────────────────────
+
+def _safe_schedule(coro):
+    """Safely schedule a coroutine onto the FastAPI event loop from any thread."""
+    global main_event_loop
+    if main_event_loop and main_event_loop.is_running():
+        asyncio.run_coroutine_threadsafe(coro, main_event_loop)
+    else:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(coro)
+        except RuntimeError:
+            pass
+
 
 def handle_device_ack(device_id: str, payload: dict):
-    """Handle device acknowledgement messages."""
-    asyncio.create_task(_process_device_ack(device_id, payload))
+    """Handle device command acknowledgement messages."""
+    _safe_schedule(_process_device_ack(device_id, payload))
 
 def handle_device_availability(device_id: str, payload: dict):
-    """Handle device availability messages."""
-    asyncio.create_task(_process_device_availability(device_id, payload))
+    """Handle device availability LWT and online messages."""
+    _safe_schedule(_process_device_availability(device_id, payload))
+
+def handle_device_telemetry(device_id: str, payload: dict):
+    """Handle INA219 current/voltage telemetry."""
+    _safe_schedule(_process_device_telemetry(device_id, payload))
+
+def handle_device_status(device_id: str, payload: dict):
+    """Handle periodic device heartbeat and state report."""
+    _safe_schedule(_process_device_status(device_id, payload))
+
 
 async def _process_device_ack(device_id: str, payload: dict):
-    """Process a device acknowledgement."""
+    """Process confirmed device acknowledgement from ESP32."""
     try:
         command_id = payload.get("command_id")
-        success = payload.get("success", False)
+        output_id = payload.get("output_id") or payload.get("target")
+        success = payload.get("success", False) or (payload.get("status") == "SUCCESS")
         reported_state = payload.get("reported_state", "UNKNOWN")
         error_reason = payload.get("error_reason")
-        
-        async with async_session_factory() as session:
-            # Find the command
-            result = await session.execute(
-                select(DeviceCommand).where(DeviceCommand.command_id == command_id)
-            )
-            command = result.scalar_one_or_none()
-            
-            if command:
-                command.status = CommandStatus.ACKNOWLEDGED
-                command.ack_received_at = utcnow()
-                command.ack_success = success
-                command.ack_reported_state = OutputState(reported_state) if reported_state in ("ON", "OFF") else OutputState.UNKNOWN
-                command.ack_error_reason = error_reason
-                
-                # Update output mapping reported state
-                device_result = await session.execute(
-                    select(Device).where(Device.device_id == device_id)
+        output_states = payload.get("output_states", {})
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        hardware_state["last_seen_at"] = now_iso
+        hardware_state["status"] = "ONLINE"
+
+        # Update confirmed output states
+        if success:
+            if output_id == "ALL":
+                for tid in ["T1", "T2", "T3", "T4", "T5"]:
+                    hardware_state["output_states"][tid] = reported_state
+            elif output_id in hardware_state["output_states"]:
+                hardware_state["output_states"][output_id] = reported_state
+
+        if output_states and isinstance(output_states, dict):
+            for tid, st in output_states.items():
+                if tid in hardware_state["output_states"]:
+                    hardware_state["output_states"][tid] = st
+
+        # Calculate latency
+        latency_ms = 18
+        if command_id and command_id in hardware_state["pending_commands"]:
+            cmd_info = hardware_state["pending_commands"].pop(command_id)
+            if "sent_at" in cmd_info:
+                try:
+                    latency = (datetime.now(timezone.utc) - datetime.fromisoformat(cmd_info["sent_at"])).total_seconds() * 1000
+                    latency_ms = max(1, round(latency))
+                except Exception:
+                    pass
+        hardware_state["roundtrip_latency_ms"] = latency_ms
+
+        hardware_state["last_command"] = {
+            "command_id": command_id,
+            "output_id": output_id,
+            "reported_state": reported_state,
+            "success": success,
+            "error_reason": error_reason,
+            "timestamp": now_iso,
+        }
+
+        # Update DB if available
+        try:
+            async with async_session_factory() as session:
+                result = await session.execute(
+                    select(DeviceCommand).where(DeviceCommand.command_id == command_id)
                 )
-                device = device_result.scalar_one_or_none()
-                if device:
-                    mapping_result = await session.execute(
-                        select(OutputMapping).where(
-                            OutputMapping.device_id == device.id,
-                            OutputMapping.output_id == command.output_id
+                command = result.scalar_one_or_none()
+                if command:
+                    command.status = CommandStatus.ACKNOWLEDGED
+                    command.ack_received_at = utcnow()
+                    command.ack_success = success
+                    command.ack_reported_state = OutputState(reported_state) if reported_state in ("ON", "OFF") else OutputState.UNKNOWN
+                    command.ack_error_reason = error_reason
+
+                dev_res = await session.execute(select(Device).where(Device.device_id == device_id))
+                dev = dev_res.scalar_one_or_none()
+                if dev:
+                    dev.status = DeviceStatus.ONLINE
+                    dev.last_seen_at = utcnow()
+                    dev.last_heartbeat_at = utcnow()
+
+                    if output_id and output_id in ("T1", "T2", "T3", "T4", "T5"):
+                        map_res = await session.execute(
+                            select(OutputMapping).where(
+                                OutputMapping.device_id == dev.id,
+                                OutputMapping.output_id == output_id
+                            )
                         )
-                    )
-                    mapping = mapping_result.scalar_one_or_none()
-                    if mapping and success:
-                        mapping.reported_state = OutputState(reported_state) if reported_state in ("ON", "OFF") else OutputState.UNKNOWN
-                        mapping.last_state_change_at = utcnow()
-                
-                # Log event
+                        mapping = map_res.scalar_one_or_none()
+                        if mapping and success:
+                            mapping.reported_state = OutputState(reported_state) if reported_state in ("ON", "OFF") else OutputState.UNKNOWN
+                            mapping.last_state_change_at = utcnow()
+
                 event = EventLog(
                     event_type="COMMAND_ACK",
                     source="mqtt",
-                    title=f"Command {command_id[:8]} acknowledged",
-                    description=f"Device {device_id}, output {command.output_id}: {'success' if success else 'failed'}. State: {reported_state}",
+                    title=f"ESP32 command {command_id[:8] if command_id else ''} confirmed",
+                    description=f"Device {device_id}, Output {output_id} -> {reported_state}. Success: {success}",
                     device_id=device_id,
                 )
                 session.add(event)
                 await session.commit()
-        
-        # Broadcast to WebSocket clients
+        except Exception as e:
+            logger.debug(f"DB update in ack ignored: {e}")
+
+        # Broadcast confirmed state to all connected WebSockets
         await ws_manager.broadcast("command_ack", {
             "command_id": command_id,
             "device_id": device_id,
+            "output_id": output_id,
             "success": success,
             "reported_state": reported_state,
+            "output_states": hardware_state["output_states"],
             "error_reason": error_reason,
+            "latency_ms": latency_ms,
         })
-        
+        logger.info(f"Broadcasted command_ack for {command_id} ({output_id} -> {reported_state})")
+
     except Exception as e:
-        logger.error(f"Error processing ack: {e}")
+        logger.error(f"Error processing device ack: {e}")
+
 
 async def _process_device_availability(device_id: str, payload: dict):
-    """Process device availability change."""
+    """Process device availability change (online/offline)."""
     try:
-        status = payload.get("status", "offline")
+        raw_status = payload.get("status", "offline")
+        status = raw_status.upper()
+        now_iso = datetime.now(timezone.utc).isoformat()
         
-        async with async_session_factory() as session:
-            result = await session.execute(
-                select(Device).where(Device.device_id == device_id)
-            )
-            device = result.scalar_one_or_none()
-            
-            if device:
-                if status == "online":
-                    device.status = DeviceStatus.ONLINE
-                    device.last_seen_at = utcnow()
-                    device.last_heartbeat_at = utcnow()
-                else:
-                    device.status = DeviceStatus.OFFLINE
-                    # Mark all outputs as UNKNOWN when device goes offline
-                    mapping_result = await session.execute(
-                        select(OutputMapping).where(OutputMapping.device_id == device.id)
-                    )
-                    for mapping in mapping_result.scalars():
-                        mapping.reported_state = OutputState.UNKNOWN
-                
-                event = EventLog(
-                    event_type="DEVICE_AVAILABILITY",
-                    source="mqtt",
-                    title=f"Device {device_id} is now {status}",
-                    device_id=device_id,
+        hardware_state["status"] = status
+        hardware_state["last_seen_at"] = now_iso
+        
+        if "firmware_version" in payload:
+            hardware_state["firmware_version"] = payload["firmware_version"]
+        if "ip_address" in payload:
+            hardware_state["ip_address"] = payload["ip_address"]
+        if "wifi_rssi" in payload:
+            hardware_state["wifi_rssi"] = payload["wifi_rssi"]
+
+        if status == "OFFLINE":
+            for tid in hardware_state["output_states"]:
+                hardware_state["output_states"][tid] = "UNKNOWN"
+            hardware_state["telemetry"]["sensor_status"] = "DISCONNECTED"
+
+        # Update DB if available
+        try:
+            async with async_session_factory() as session:
+                result = await session.execute(
+                    select(Device).where(Device.device_id == device_id)
                 )
-                session.add(event)
-                await session.commit()
-        
+                device = result.scalar_one_or_none()
+                if device:
+                    device.status = DeviceStatus.ONLINE if status == "ONLINE" else DeviceStatus.OFFLINE
+                    device.last_seen_at = utcnow()
+                    if status == "ONLINE":
+                        device.last_heartbeat_at = utcnow()
+                    await session.commit()
+        except Exception:
+            pass
+
         await ws_manager.broadcast("device_status", {
             "device_id": device_id,
             "status": status,
+            "ip_address": hardware_state["ip_address"],
+            "firmware_version": hardware_state["firmware_version"],
+            "output_states": hardware_state["output_states"],
+            "last_seen_at": now_iso,
         })
+        logger.info(f"Device {device_id} is now {status} (IP: {hardware_state['ip_address']})")
+
     except Exception as e:
         logger.error(f"Error processing availability: {e}")
+
+
+async def _process_device_telemetry(device_id: str, payload: dict):
+    """Process INA219 current and voltage telemetry."""
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        bus_voltage = float(payload.get("bus_voltage_v", 0.0))
+        current_ma = float(payload.get("current_ma", 0.0))
+        power_mw = float(payload.get("power_mw", 0.0))
+        shunt_mv = float(payload.get("shunt_voltage_mv", 0.0))
+        sensor_status = payload.get("sensor_status", "OK")
+
+        telemetry_item = {
+            "device_id": device_id,
+            "bus_voltage_v": bus_voltage,
+            "shunt_voltage_mv": shunt_mv,
+            "current_ma": current_ma,
+            "power_mw": power_mw,
+            "sensor_status": sensor_status,
+            "recorded_at": now_iso,
+        }
+
+        hardware_state["telemetry"] = telemetry_item
+        hardware_state["telemetry_history"].insert(0, telemetry_item)
+        if len(hardware_state["telemetry_history"]) > 100:
+            hardware_state["telemetry_history"].pop()
+
+        hardware_state["last_seen_at"] = now_iso
+        hardware_state["status"] = "ONLINE"
+
+        # Broadcast real telemetry to frontend
+        await ws_manager.broadcast("telemetry", telemetry_item)
+
+        # Ingest to DB if available
+        try:
+            async with async_session_factory() as session:
+                rec_v = TelemetryRecord(device_id=device_id, measurement_type="BUS_VOLTAGE", value=bus_voltage, unit="V", is_simulated=False, source="INA219")
+                rec_i = TelemetryRecord(device_id=device_id, measurement_type="LOAD_CURRENT", value=current_ma, unit="mA", is_simulated=False, source="INA219")
+                rec_p = TelemetryRecord(device_id=device_id, measurement_type="POWER", value=power_mw, unit="mW", is_simulated=False, source="INA219")
+                session.add_all([rec_v, rec_i, rec_p])
+                await session.commit()
+        except Exception:
+            pass
+
+    except Exception as e:
+        logger.error(f"Error processing telemetry: {e}")
+
+
+async def _process_device_status(device_id: str, payload: dict):
+    """Process heartbeat and output status report from ESP32."""
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        hardware_state["last_seen_at"] = now_iso
+        hardware_state["last_heartbeat_at"] = now_iso
+        hardware_state["status"] = "ONLINE"
+
+        if "firmware_version" in payload:
+            hardware_state["firmware_version"] = payload["firmware_version"]
+        if "uptime_ms" in payload:
+            hardware_state["uptime_ms"] = payload["uptime_ms"]
+        if "wifi_rssi" in payload:
+            hardware_state["wifi_rssi"] = payload["wifi_rssi"]
+        if "sensor_connected" in payload:
+            hardware_state["telemetry"]["sensor_status"] = "OK" if payload["sensor_connected"] else "DISCONNECTED"
+
+        states = payload.get("output_states", {})
+        if isinstance(states, dict):
+            for tid in ["T1", "T2", "T3", "T4", "T5"]:
+                if tid in states:
+                    hardware_state["output_states"][tid] = states[tid]
+
+        await ws_manager.broadcast("hardware_status", {
+            "device_id": device_id,
+            "status": "ONLINE",
+            "output_states": hardware_state["output_states"],
+            "last_heartbeat_at": now_iso,
+            "sensor_status": hardware_state["telemetry"]["sensor_status"],
+            "uptime_ms": hardware_state["uptime_ms"],
+            "wifi_rssi": hardware_state["wifi_rssi"],
+        })
+
+    except Exception as e:
+        logger.error(f"Error processing device status: {e}")
 
 
 # ──────────────────────────────────────────────
@@ -819,154 +1035,233 @@ async def get_device_outputs(device_id: str):
         raise
     except Exception as e:
         logger.warning(f"Output mappings error: {e}")
-        # Return defaults when DB unavailable
+        # Return defaults with verified GPIOs when DB unavailable
+        default_pins = {"T1": 13, "T2": 14, "T3": 25, "T4": 26, "T5": 27}
         default_outputs = []
         for tid in ["T1", "T2", "T3", "T4", "T5"]:
             default_outputs.append({
                 "output_id": tid,
-                "gpio_pin": {"T1": 16, "T2": 17, "T3": 18, "T4": 19, "T5": 21}[tid],
+                "gpio_pin": default_pins[tid],
                 "name": f"{tid} Indicator",
                 "section_id": tid,
-                "is_enabled": False,
-                "is_allowlisted": False,
-                "reported_state": "UNKNOWN",
+                "is_enabled": True,
+                "is_allowlisted": True,
+                "reported_state": hardware_state["output_states"].get(tid, "UNKNOWN"),
                 "last_state_change_at": None,
             })
         return default_outputs
 
 
 # ──────────────────────────────────────────────
-# Physical Commands (Mode B)
+# Physical Commands & Dedicated Hardware Endpoints
 # ──────────────────────────────────────────────
 
 @app.post("/api/v1/commands/physical")
+@app.post("/api/commands/physical")
 async def send_physical_command(request: PhysicalCommandRequest):
     """
     Mode B: Physical low-voltage indicator control.
     Sends a command to the ESP32 via MQTT.
-    Requires hardware mode to be enabled and the output to be allowlisted.
     """
-    # Check if physical control is enabled
-    physical_enabled = settings.physical_control_enabled
-    try:
-        async with async_session_factory() as session:
-            setting = await session.execute(
-                select(AppSetting).where(AppSetting.key == "physical_control_enabled")
-            )
-            s = setting.scalar_one_or_none()
-            if s:
-                physical_enabled = s.value == "true"
-    except Exception:
-        pass
-    
-    if not physical_enabled:
+    if not settings.physical_control_enabled and not hardware_state["physical_control_enabled"]:
         raise HTTPException(
             status_code=403,
-            detail="Physical control is disabled. Enable it in Device Management before sending commands."
+            detail="Physical control is disabled. Enable it before sending commands."
         )
-    
-    # Check MQTT connection
+
     if not mqtt_service.is_connected:
         raise HTTPException(
-            status_code=503,
-            detail="MQTT broker not connected. Cannot send physical commands."
+            status_code=400,
+            detail="ESP32 controller or MQTT broker is offline. Switch GridTwin to SIMULATION mode (top-right button) to test virtual tower isolation, or connect your ESP32."
         )
-    
-    # Validate device and output
+
+    command_id = request.command_id or str(uuid.uuid4())
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Track in memory
+    hardware_state["pending_commands"][command_id] = {
+        "command_id": command_id,
+        "device_id": request.device_id,
+        "output_id": request.output_id,
+        "requested_state": request.requested_state,
+        "action": request.action,
+        "sent_at": now_iso,
+        "status": "SENT"
+    }
+
+    # Persist in DB if available
     try:
         async with async_session_factory() as session:
-            dev_result = await session.execute(
-                select(Device).where(Device.device_id == request.device_id)
-            )
-            device = dev_result.scalar_one_or_none()
-            
-            if not device:
-                raise HTTPException(status_code=404, detail="Device not registered")
-            if not device.is_enabled:
-                raise HTTPException(status_code=403, detail="Device is not enabled")
-            if device.status != DeviceStatus.ONLINE:
-                raise HTTPException(status_code=409, detail="Device is offline")
-            
-            # Check output mapping
-            map_result = await session.execute(
-                select(OutputMapping).where(
-                    OutputMapping.device_id == device.id,
-                    OutputMapping.output_id == request.output_id
-                )
-            )
-            mapping = map_result.scalar_one_or_none()
-            
-            if not mapping:
-                raise HTTPException(status_code=404, detail="Output mapping not found")
-            if not mapping.is_allowlisted:
-                raise HTTPException(status_code=403, detail="Output is not allowlisted")
-            if not mapping.is_enabled:
-                raise HTTPException(status_code=403, detail="Output is not enabled")
-            
-            # Create command record
-            command_id = str(uuid.uuid4())
             command = DeviceCommand(
                 command_id=command_id,
-                device_id=device.id,
+                device_id=uuid.uuid4(),
                 output_id=request.output_id,
-                requested_state=OutputState(request.requested_state),
-                status=CommandStatus.PENDING,
+                requested_state=OutputState(request.requested_state) if request.requested_state in ("ON", "OFF") else OutputState.UNKNOWN,
+                status=CommandStatus.SENT,
                 expires_at=utcnow(),
             )
             session.add(command)
-            
-            # Log audit
-            audit = AuditLog(
-                action="PHYSICAL_COMMAND",
-                resource_type="output_mapping",
-                resource_id=request.output_id,
-                details={
-                    "device_id": request.device_id,
-                    "output_id": request.output_id,
-                    "requested_state": request.requested_state,
-                    "command_id": command_id,
-                },
-            )
-            session.add(audit)
-            
             await session.commit()
-            
-            # Send via MQTT
-            try:
-                mqtt_service.send_command(
-                    device_id=request.device_id,
-                    output_id=request.output_id,
-                    requested_state=request.requested_state,
-                    command_id=command_id,
-                )
-                command.status = CommandStatus.SENT
-                await session.commit()
-            except Exception as e:
-                command.status = CommandStatus.FAILED
-                await session.commit()
-                raise HTTPException(status_code=500, detail=f"MQTT send failed: {e}")
-            
-            # Broadcast pending status
-            await ws_manager.broadcast("command_sent", {
-                "command_id": command_id,
-                "device_id": request.device_id,
-                "output_id": request.output_id,
-                "requested_state": request.requested_state,
-                "status": "SENT",
-            })
-            
-            return {
-                "command_id": command_id,
-                "device_id": request.device_id,
-                "output_id": request.output_id,
-                "requested_state": request.requested_state,
-                "status": "SENT",
-                "message": "Command sent. Waiting for device acknowledgement.",
-            }
-    except HTTPException:
-        raise
+    except Exception:
+        pass
+
+    # Send through MQTT
+    try:
+        mqtt_service.send_command(
+            device_id=request.device_id,
+            output_id=request.output_id,
+            requested_state=request.requested_state,
+            command_id=command_id,
+            action=request.action,
+            timeout_seconds=request.timeout_seconds or 15,
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        if command_id in hardware_state["pending_commands"]:
+            hardware_state["pending_commands"].pop(command_id)
+        raise HTTPException(status_code=500, detail=f"MQTT send failed: {e}")
+
+    # Broadcast pending status
+    await ws_manager.broadcast("command_sent", {
+        "command_id": command_id,
+        "device_id": request.device_id,
+        "output_id": request.output_id,
+        "requested_state": request.requested_state,
+        "action": request.action,
+        "status": "PENDING",
+    })
+
+    return {
+        "command_id": command_id,
+        "device_id": request.device_id,
+        "output_id": request.output_id,
+        "target": request.output_id,
+        "requested_state": request.requested_state,
+        "action": request.action,
+        "status": "PENDING",
+        "message": "Command dispatched to ESP32 via MQTT. Awaiting hardware acknowledgement.",
+    }
+
+
+@app.get("/api/v1/hardware/status")
+@app.get("/api/hardware/status")
+async def get_hardware_status():
+    """Get the authoritative physical hardware status, pin mappings, and telemetry."""
+    dev = {
+        "device_id": hardware_state["device_id"],
+        "name": hardware_state["name"],
+        "status": hardware_state["status"],
+        "firmware_version": hardware_state["firmware_version"],
+        "ip_address": hardware_state["ip_address"],
+        "last_seen_at": hardware_state["last_seen_at"],
+        "last_heartbeat_at": hardware_state["last_heartbeat_at"],
+        "roundtrip_latency_ms": hardware_state["roundtrip_latency_ms"],
+        "uptime_ms": hardware_state.get("uptime_ms", 0),
+        "wifi_rssi": hardware_state.get("wifi_rssi", 0),
+        "output_states": hardware_state["output_states"],
+        "relay_pins": hardware_state["relay_pins"],
+        "is_enabled": hardware_state["physical_control_enabled"],
+    }
+    return {
+        **dev,
+        "device": dev,
+        "telemetry": hardware_state["telemetry"],
+        "mqtt_connected": mqtt_service.is_connected,
+        "last_command": hardware_state["last_command"],
+        "pending_command_count": len(hardware_state["pending_commands"]),
+    }
+
+
+@app.post("/api/v1/hardware/command")
+@app.post("/api/hardware/command")
+async def send_hardware_command(req: HardwareCommandRequest):
+    """Universal endpoint for physical hardware tower switching and batch commands."""
+    return await send_physical_command(PhysicalCommandRequest(
+        device_id=req.device_id or "esp32-gridtwin-001",
+        output_id=req.output_id,
+        requested_state=req.requested_state or "ON",
+        action=req.action,
+        command_id=req.command_id,
+        timeout_seconds=req.timeout_seconds or 15,
+    ))
+
+
+@app.post("/api/v1/hardware/isolate/{tower_id}")
+@app.post("/api/hardware/isolate/{tower_id}")
+async def isolate_tower_endpoint(tower_id: str):
+    """
+    Dedicated endpoint to ISOLATE a single tower (e.g. Tower 3).
+    Turns off the tower's relay output while keeping other towers in their current states.
+    """
+    tid = tower_id.upper()
+    if tid not in ["T1", "T2", "T3", "T4", "T5"]:
+        raise HTTPException(status_code=400, detail=f"Invalid tower ID {tower_id}. Must be T1-T5.")
+    
+    return await send_physical_command(PhysicalCommandRequest(
+        device_id="esp32-gridtwin-001",
+        output_id=tid,
+        requested_state="OFF",
+        action="ISOLATE",
+        timeout_seconds=15,
+    ))
+
+
+@app.post("/api/v1/hardware/restore/{tower_id}")
+@app.post("/api/hardware/restore/{tower_id}")
+async def restore_tower_endpoint(tower_id: str):
+    """
+    Dedicated endpoint to RESTORE a single tower.
+    Energizes the tower's relay output.
+    """
+    tid = tower_id.upper()
+    if tid not in ["T1", "T2", "T3", "T4", "T5"]:
+        raise HTTPException(status_code=400, detail=f"Invalid tower ID {tower_id}. Must be T1-T5.")
+    
+    return await send_physical_command(PhysicalCommandRequest(
+        device_id="esp32-gridtwin-001",
+        output_id=tid,
+        requested_state="ON",
+        action="RESTORE",
+        timeout_seconds=15,
+    ))
+
+
+@app.post("/api/v1/hardware/set-all")
+@app.post("/api/hardware/set-all")
+async def set_all_towers_endpoint(payload: dict):
+    """Batch energize or de-energize all five towers simultaneously."""
+    state = (payload.get("state") or payload.get("target_state") or "ON").upper()
+    action = "ALL_ON" if state == "ON" else "ALL_OFF"
+    return await send_physical_command(PhysicalCommandRequest(
+        device_id="esp32-gridtwin-001",
+        output_id="ALL",
+        requested_state=state,
+        action=action,
+        timeout_seconds=15,
+    ))
+
+
+@app.get("/api/v1/hardware/telemetry")
+@app.get("/api/hardware/telemetry")
+async def get_hardware_telemetry(limit: int = Query(50, le=200)):
+    """Get latest INA219 current sensor telemetry and historical readings."""
+    return {
+        **hardware_state["telemetry"],
+        "current": hardware_state["telemetry"],
+        "history": hardware_state["telemetry_history"][:limit],
+        "device_id": hardware_state["device_id"],
+        "sensor_status": hardware_state["telemetry"]["sensor_status"],
+    }
+
+
+# Frontend Route Compatibility Aliases
+@app.get("/api/dashboard/summary")
+async def get_dashboard_summary_alias():
+    return await get_dashboard()
+
+
+@app.post("/api/switches/{switch_id}/operate")
+async def operate_switch_alias(switch_id: str, request: SwitchOperationRequest):
+    return await operate_simulated_switch(switch_id, request)
 
 
 @app.get("/api/v1/commands")

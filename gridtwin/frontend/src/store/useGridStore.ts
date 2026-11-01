@@ -9,8 +9,12 @@ import {
   GridAlert,
   SimulationMetric,
   SelectedElement,
-  SwitchState
+  SwitchState,
+  HardwareMode,
+  INA219Telemetry
 } from '../types';
+ 
+const API_BASE = (import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 
 interface GridState {
   // Topology
@@ -20,17 +24,21 @@ interface GridState {
   loads: GridLoad[];
   connectivity: ConnectivityResult;
 
-  // Hardware State
+  // Real Hardware State Model
   hardwareDevice: HardwareDevice;
+  hardwareMode: HardwareMode;
+  pendingTowers: Record<string, boolean>;
+  ina219Telemetry: INA219Telemetry;
   physicalSyncEnabled: boolean;
   isBackendConnected: boolean;
+  mqttConnected: boolean;
 
   // Real-time telemetry history
   metricsHistory: SimulationMetric[];
   currentMetric: SimulationMetric;
 
   // UI & View state
-  activeTab: 'dashboard' | '3d-twin' | 'sld' | 'hardware' | 'analytics' | 'scenarios' | 'monitoring' | 'devices' | 'alerts' | 'settings';
+  activeTab: 'dashboard' | '3d-twin' | 'sld' | 'hardware' | 'analytics' | 'scenarios' | 'monitoring' | 'devices' | 'alerts' | 'settings' | 'overview';
   selectedElement: SelectedElement | null;
   cameraPreset: 'overview' | 'substation' | 'feeder1-3' | 'feeder4-5' | 'loads' | 'top' | 'side';
   isNightMode: boolean;
@@ -53,12 +61,17 @@ interface GridState {
   setSwitchState: (switchId: string, state: SwitchState) => Promise<void>;
   toggleBypassSwitch: () => void;
   isolateTower: (towerId: 'T1' | 'T2' | 'T3' | 'T4' | 'T5') => void;
+  turnTowerOn: (towerId: 'T1' | 'T2' | 'T3' | 'T4' | 'T5') => void;
+  turnTowerOff: (towerId: 'T1' | 'T2' | 'T3' | 'T4' | 'T5') => void;
+  turnAllTowersOn: () => void;
+  turnAllTowersOff: () => void;
   isolateT3WithBypass: () => void;
   restoreNormalOperation: () => void;
   setSelectedElement: (element: SelectedElement | null) => void;
   setCameraPreset: (preset: 'overview' | 'substation' | 'feeder1-3' | 'feeder4-5' | 'loads' | 'top' | 'side') => void;
-  setActiveTab: (tab: 'dashboard' | '3d-twin' | 'sld' | 'hardware' | 'analytics' | 'scenarios' | 'monitoring' | 'devices' | 'alerts' | 'settings') => void;
+  setActiveTab: (tab: 'dashboard' | '3d-twin' | 'sld' | 'hardware' | 'analytics' | 'scenarios' | 'monitoring' | 'devices' | 'alerts' | 'settings' | 'overview') => void;
   setPhysicalSync: (enabled: boolean) => void;
+  setHardwareMode: (mode: HardwareMode) => void;
   recomputeConnectivity: () => void;
   triggerScenario: (scenarioId: string) => void;
   addAlert: (alert: Omit<GridAlert, 'id' | 'timestamp'>) => void;
@@ -67,6 +80,14 @@ interface GridState {
   togglePowerFlow: () => void;
   toggleLabels: () => void;
   syncWithBackendData: (data: any) => void;
+
+  // Dedicated Hardware Control Actions
+  sendHardwareTowerCommand: (towerId: 'T1' | 'T2' | 'T3' | 'T4' | 'T5', targetState: 'ON' | 'OFF') => Promise<void>;
+  sendHardwareIsolateCommand: (towerId: 'T1' | 'T2' | 'T3' | 'T4' | 'T5') => Promise<void>;
+  sendHardwareRestoreCommand: (towerId: 'T1' | 'T2' | 'T3' | 'T4' | 'T5') => Promise<void>;
+  sendHardwareSetAllCommand: (targetState: 'ON' | 'OFF') => Promise<void>;
+  fetchHardwareStatus: () => Promise<void>;
+  handleWebSocketMessage: (type: string, data: any) => void;
 }
 
 // Initial 5-Section Topology Data
@@ -116,11 +137,11 @@ const INITIAL_EDGES: GridEdge[] = [
 ];
 
 const INITIAL_SWITCHES: GridSwitch[] = [
-  { id: 'sw-1', switch_id: 'SW-T1', name: 'T1 Section Recloser (Residential)', controlled_edge_id: 'LINE-BUS-N01', state: 'CLOSED', section_id: 'T1', description: 'Controls Section 1 (Residential Quarter)', gpio_pin: 25, hardware_ack: true, last_operated: 'Just now' },
-  { id: 'sw-2', switch_id: 'SW-T2', name: 'T2 Section Recloser (Commercial)', controlled_edge_id: 'LINE-BUS-N02', state: 'CLOSED', section_id: 'T2', description: 'Controls Section 2 (Commerce Plaza)', gpio_pin: 26, hardware_ack: true, last_operated: 'Just now' },
-  { id: 'sw-3', switch_id: 'SW-T3', name: 'T3 Section Recloser (Critical/Hospital)', controlled_edge_id: 'LINE-BUS-N03', state: 'CLOSED', section_id: 'T3', description: 'Controls Section 3 (Metropolitan Hospital)', gpio_pin: 27, hardware_ack: true, last_operated: 'Just now' },
-  { id: 'sw-4', switch_id: 'SW-T4', name: 'T4 Section Recloser (Industrial)', controlled_edge_id: 'LINE-BUS-N04', state: 'CLOSED', section_id: 'T4', description: 'Controls Section 4 (Industrial Complex)', gpio_pin: 14, hardware_ack: true, last_operated: 'Just now' },
-  { id: 'sw-5', switch_id: 'SW-T5', name: 'T5 Section Recloser (Renewable Microgrid)', controlled_edge_id: 'LINE-BUS-N05', state: 'CLOSED', section_id: 'T5', description: 'Controls Section 5 (Solar & EV Station)', gpio_pin: 12, hardware_ack: true, last_operated: 'Just now' },
+  { id: 'sw-1', switch_id: 'SW-T1', name: 'T1 Section Recloser (Residential)', controlled_edge_id: 'LINE-BUS-N01', state: 'CLOSED', section_id: 'T1', description: 'Controls Section 1 (Residential Quarter)', gpio_pin: 13, hardware_ack: true, last_operated: 'Just now' },
+  { id: 'sw-2', switch_id: 'SW-T2', name: 'T2 Section Recloser (Commercial)', controlled_edge_id: 'LINE-BUS-N02', state: 'CLOSED', section_id: 'T2', description: 'Controls Section 2 (Commerce Plaza)', gpio_pin: 14, hardware_ack: true, last_operated: 'Just now' },
+  { id: 'sw-3', switch_id: 'SW-T3', name: 'T3 Section Recloser (Critical/Hospital)', controlled_edge_id: 'LINE-BUS-N03', state: 'CLOSED', section_id: 'T3', description: 'Controls Section 3 (Metropolitan Hospital)', gpio_pin: 25, hardware_ack: true, last_operated: 'Just now' },
+  { id: 'sw-4', switch_id: 'SW-T4', name: 'T4 Section Recloser (Industrial)', controlled_edge_id: 'LINE-BUS-N04', state: 'CLOSED', section_id: 'T4', description: 'Controls Section 4 (Industrial Complex)', gpio_pin: 26, hardware_ack: true, last_operated: 'Just now' },
+  { id: 'sw-5', switch_id: 'SW-T5', name: 'T5 Section Recloser (Renewable Microgrid)', controlled_edge_id: 'LINE-BUS-N05', state: 'CLOSED', section_id: 'T5', description: 'Controls Section 5 (Solar & EV Station)', gpio_pin: 27, hardware_ack: true, last_operated: 'Just now' },
 ];
 
 const INITIAL_LOADS: GridLoad[] = [
@@ -243,25 +264,43 @@ export const useGridStore = create<GridState>((set, get) => ({
   connectivity: calculateConnectivity(INITIAL_SWITCHES),
 
   hardwareDevice: {
-    device_id: 'ESP32_GRID_01',
-    name: 'Lab Bench Miniature Controller',
-    status: 'ONLINE',
+    device_id: 'esp32-gridtwin-001',
+    name: 'GRIDTWIN ESP32 Controller',
+    status: 'OFFLINE',
     is_registered: true,
     is_enabled: true,
-    last_seen_at: new Date().toISOString(),
-    last_heartbeat_at: new Date().toISOString(),
-    roundtrip_latency_ms: 18,
-    firmware_version: 'v1.4.2-rel',
+    last_seen_at: undefined,
+    last_heartbeat_at: undefined,
+    roundtrip_latency_ms: 0,
+    firmware_version: '2.0.0-hackathon',
     output_states: {
-      'T1': 'ON',
-      'T2': 'ON',
-      'T3': 'ON',
-      'T4': 'ON',
-      'T5': 'ON',
+      'T1': 'UNKNOWN',
+      'T2': 'UNKNOWN',
+      'T3': 'UNKNOWN',
+      'T4': 'UNKNOWN',
+      'T5': 'UNKNOWN',
+    },
+    relay_pins: {
+      'T1': 13,
+      'T2': 14,
+      'T3': 25,
+      'T4': 26,
+      'T5': 27,
+      'RELAY_6': 32
     }
+  },
+  hardwareMode: 'PHYSICAL',
+  pendingTowers: {},
+  ina219Telemetry: {
+    bus_voltage_v: 0.0,
+    shunt_voltage_mv: 0.0,
+    current_ma: 0.0,
+    power_mw: 0.0,
+    sensor_status: 'DISCONNECTED',
   },
   physicalSyncEnabled: true,
   isBackendConnected: false,
+  mqttConnected: false,
 
   metricsHistory: Array.from({ length: 20 }).map((_, i) => ({
     timestamp: new Date(Date.now() - (20 - i) * 2000).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }),
@@ -408,21 +447,8 @@ export const useGridStore = create<GridState>((set, get) => ({
     });
   },
 
-  isolateTower: (towerId: 'T1' | 'T2' | 'T3' | 'T4' | 'T5') => {
-    const currentList: ('T1' | 'T2' | 'T3' | 'T4' | 'T5')[] = get().isolatedTowers || [];
-    const isAlreadyIsolated = currentList.includes(towerId);
-
-    // Toggle: if already isolated, remove it; if not, add it
-    const nextList: ('T1' | 'T2' | 'T3' | 'T4' | 'T5')[] = isAlreadyIsolated
-      ? currentList.filter(id => id !== towerId)
-      : [...currentList, towerId];
-
-    if (nextList.length === 0) {
-      // When isolation is cleared, restore normal connection with bypass OFF
-      get().restoreNormalOperation();
-      return;
-    }
-
+  // Apply Virtual Isolation List & Recompute Network Electrical State
+  _applyIsolationState: (nextList: ('T1' | 'T2' | 'T3' | 'T4' | 'T5')[]) => {
     const swIdMap: Record<string, string> = {
       'T1': 'SW-T1',
       'T2': 'SW-T2',
@@ -431,8 +457,8 @@ export const useGridStore = create<GridState>((set, get) => ({
       'T5': 'SW-T5',
     };
 
-    const { switches } = get();
-    // For every tower: if in nextList, switch is OPEN; otherwise switch is CLOSED
+    const { switches, bypassSwitchState } = get();
+    // For every tower: if in nextList, switch is OPEN (isolated); otherwise switch is CLOSED (energized)
     const updatedSwitches = switches.map(s => {
       const isThisIsolated = Object.entries(swIdMap).some(
         ([tId, swId]) => nextList.includes(tId as any) && swId === s.switch_id
@@ -440,13 +466,11 @@ export const useGridStore = create<GridState>((set, get) => ({
       return {
         ...s,
         state: isThisIsolated ? ('OPEN' as SwitchState) : ('CLOSED' as SwitchState),
-        last_operated: isThisIsolated ? 'Isolated (Breaker Open)' : 'Live via Bypass'
+        last_operated: isThisIsolated ? 'Isolated (Breaker Open)' : 'Live Transmission'
       };
     });
 
-    // "make the connection of isolation when the bypass is on":
-    // Setting bypass to CLOSED establishes the bypass connection around the isolated tower
-    const connectivity = calculateConnectivity(updatedSwitches, 'CLOSED', nextList);
+    const connectivity = calculateConnectivity(updatedSwitches, bypassSwitchState, nextList);
     const updatedNodes = get().nodes.map(n => ({
       ...n,
       is_energized: connectivity.energized_nodes.includes(n.node_id)
@@ -478,7 +502,6 @@ export const useGridStore = create<GridState>((set, get) => ({
       isolatedTowers: nextList,
       isolatedTowerId: nextList[0] || null,
       isT3Isolated: nextList.includes('T3'),
-      bypassSwitchState: 'CLOSED',
       switches: updatedSwitches,
       connectivity,
       nodes: updatedNodes,
@@ -489,22 +512,24 @@ export const useGridStore = create<GridState>((set, get) => ({
         ...get().hardwareDevice,
         output_states: updatedOutputs
       },
-      alerts: [
+      alerts: nextList.length > 0 ? [
         {
           id: `alt-${Date.now()}`,
           timestamp: new Date().toLocaleTimeString(),
           severity: 'WARNING',
           source: 'ISOLATION_CONTROLLER',
-          message: `Tower Isolation Active: [${nextList.join(', ')}] isolated (NO CURRENT). Bypass is ON: current safely routed around isolated section to remaining towers (${newKw} kW served).`,
+          message: `Tower Isolation: [${nextList.join(', ')}] Isolated. In and Out power flow blocked (0 A).`,
           is_active: true
         },
         ...get().alerts
-      ],
+      ] : get().alerts,
       eventLogs: [
         {
           id: `evt-${Date.now()}`,
           timestamp: new Date().toLocaleTimeString(),
-          event: `Towers [${nextList.join(', ')}] isolated with Bypass ON. Power routed to healthy towers via bypass bus (${newKw} kW).`,
+          event: nextList.length > 0
+            ? `Towers [${nextList.join(', ')}] isolated. Current flow blocked in and out.`
+            : `All towers normalized / energized.`,
           type: 'SCENARIO'
         },
         ...get().eventLogs
@@ -512,11 +537,56 @@ export const useGridStore = create<GridState>((set, get) => ({
     });
   },
 
+  turnTowerOn: (towerId: 'T1' | 'T2' | 'T3' | 'T4' | 'T5') => {
+    // Always dispatch RESTORE to physical ESP32 hardware
+    get().sendHardwareRestoreCommand(towerId);
+    const { isolatedTowers = [] } = get();
+    const nextList = isolatedTowers.filter(id => id !== towerId);
+    (get() as any)._applyIsolationState(nextList);
+  },
+
+  turnTowerOff: (towerId: 'T1' | 'T2' | 'T3' | 'T4' | 'T5') => {
+    // Always dispatch ISOLATE to physical ESP32 hardware
+    get().sendHardwareIsolateCommand(towerId);
+    const { isolatedTowers = [] } = get();
+    const nextList = isolatedTowers.includes(towerId) ? isolatedTowers : [...isolatedTowers, towerId];
+    (get() as any)._applyIsolationState(nextList);
+  },
+
+  turnAllTowersOn: () => {
+    // Always dispatch ALL ON to physical ESP32 hardware
+    get().sendHardwareSetAllCommand('ON');
+    get().restoreNormalOperation();
+  },
+
+  turnAllTowersOff: () => {
+    // Always dispatch ALL OFF to physical ESP32 hardware
+    get().sendHardwareSetAllCommand('OFF');
+    (get() as any)._applyIsolationState(['T1', 'T2', 'T3', 'T4', 'T5']);
+  },
+
+  isolateTower: (towerId: 'T1' | 'T2' | 'T3' | 'T4' | 'T5') => {
+    const { isolatedTowers = [] } = get();
+    const isAlreadyIsolated = isolatedTowers.includes(towerId);
+
+    if (isAlreadyIsolated) {
+      get().turnTowerOn(towerId);
+    } else {
+      get().turnTowerOff(towerId);
+    }
+  },
+
   isolateT3WithBypass: () => {
     get().isolateTower('T3');
   },
 
   restoreNormalOperation: () => {
+    const { hardwareMode, hardwareDevice } = get();
+    // Dispatch to physical hardware whenever online or in PHYSICAL mode
+    if (hardwareDevice.status === 'ONLINE' || hardwareMode === 'PHYSICAL') {
+      get().sendHardwareSetAllCommand('ON');
+    }
+
     const { switches } = get();
     const updatedSwitches = switches.map(s => ({ ...s, state: 'CLOSED' as SwitchState, last_operated: 'Normal Restored' }));
     const connectivity = calculateConnectivity(updatedSwitches, 'OPEN', []);
@@ -591,6 +661,22 @@ export const useGridStore = create<GridState>((set, get) => ({
   },
 
   setSwitchState: async (switchId: string, state: SwitchState) => {
+    const { hardwareMode } = get();
+    const swSectionMap: Record<string, 'T1' | 'T2' | 'T3' | 'T4' | 'T5'> = {
+      'SW-T1': 'T1',
+      'SW-T2': 'T2',
+      'SW-T3': 'T3',
+      'SW-T4': 'T4',
+      'SW-T5': 'T5',
+    };
+    const affectedSection = swSectionMap[switchId];
+
+    // In PHYSICAL mode: send command to ESP32 relay and await ACK
+    if (hardwareMode === 'PHYSICAL' && affectedSection) {
+      await get().sendHardwareTowerCommand(affectedSection, state === 'CLOSED' ? 'ON' : 'OFF');
+      return;
+    }
+
     const { switches, nodes, loads, hardwareDevice, physicalSyncEnabled } = get();
     
     // Update switch
@@ -609,14 +695,6 @@ export const useGridStore = create<GridState>((set, get) => ({
     // Update multi-tower isolated list: add or remove section based on open/closed
     const currentList: ('T1' | 'T2' | 'T3' | 'T4' | 'T5')[] = get().isolatedTowers || [];
     let nextList = [...currentList];
-    const swSectionMap: Record<string, 'T1' | 'T2' | 'T3' | 'T4' | 'T5'> = {
-      'SW-T1': 'T1',
-      'SW-T2': 'T2',
-      'SW-T3': 'T3',
-      'SW-T4': 'T4',
-      'SW-T5': 'T5',
-    };
-    const affectedSection = swSectionMap[switchId];
     if (affectedSection) {
       if (state === 'OPEN' && !nextList.includes(affectedSection)) {
         nextList.push(affectedSection);
@@ -888,12 +966,401 @@ export const useGridStore = create<GridState>((set, get) => ({
   togglePowerFlow: () => set(state => ({ showPowerFlow: !state.showPowerFlow })),
   toggleLabels: () => set(state => ({ showLabels: !state.showLabels })),
 
+  setHardwareMode: (mode: HardwareMode) => {
+    set({ hardwareMode: mode });
+    get().addAlert({
+      severity: 'INFO',
+      source: 'OPERATOR_CONSOLE',
+      message: mode === 'PHYSICAL'
+        ? 'Switched to PHYSICAL HARDWARE Mode: Real ESP32 relays and INA219 sensor active.'
+        : 'Switched to SIMULATION LAB Mode: Virtual twin simulation running locally.',
+      is_active: true
+    });
+  },
+
+  sendHardwareTowerCommand: async (towerId, targetState) => {
+    set(state => ({
+      pendingTowers: { ...state.pendingTowers, [towerId]: true },
+      eventLogs: [
+        {
+          id: `evt-${Date.now()}`,
+          timestamp: new Date().toLocaleTimeString(),
+          event: `[MQTT OUT] Command sent: Tower ${towerId} -> ${targetState} (Awaiting ESP32 ACK)...`,
+          type: 'MQTT'
+        },
+        ...state.eventLogs
+      ]
+    }));
+
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/hardware/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          device_id: 'esp32-gridtwin-001',
+          output_id: towerId,
+          requested_state: targetState,
+          timeout_seconds: 15
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'HTTP Command Failed' }));
+        throw new Error(err.detail || 'Hardware command rejected');
+      }
+
+      const data = await res.json();
+      get().addAlert({
+        severity: 'INFO',
+        source: 'HARDWARE_BRIDGE',
+        message: `Command ${data.command_id?.slice(0, 8) || ''} dispatched to ESP32: Tower ${towerId} -> ${targetState}. Waiting for physical relay ACK...`,
+        is_active: true
+      });
+    } catch (err: any) {
+      set(state => {
+        const next = { ...state.pendingTowers };
+        delete next[towerId];
+        return { pendingTowers: next };
+      });
+      get().addAlert({
+        severity: 'CRITICAL',
+        source: 'HARDWARE_BRIDGE',
+        message: `Failed to switch Tower ${towerId}: ${err.message || 'Connection error'}. Physical state unchanged.`,
+        is_active: true
+      });
+    }
+  },
+
+  sendHardwareIsolateCommand: async (towerId) => {
+    set(state => ({
+      pendingTowers: { ...state.pendingTowers, [towerId]: true },
+      eventLogs: [
+        {
+          id: `evt-${Date.now()}`,
+          timestamp: new Date().toLocaleTimeString(),
+          event: `[MQTT OUT] ISOLATE Tower ${towerId} sent to ESP32 (Awaiting Relay ACK)...`,
+          type: 'MQTT'
+        },
+        ...state.eventLogs
+      ]
+    }));
+
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/hardware/isolate/${towerId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'HTTP Command Failed' }));
+        throw new Error(err.detail || 'Hardware isolation rejected');
+      }
+
+      const data = await res.json();
+      get().addAlert({
+        severity: 'INFO',
+        source: 'HARDWARE_BRIDGE',
+        message: `Isolation command dispatched: Isolating Tower ${towerId} on physical relay. Waiting for ACK...`,
+        is_active: true
+      });
+    } catch (err: any) {
+      set(state => {
+        const next = { ...state.pendingTowers };
+        delete next[towerId];
+        return { pendingTowers: next };
+      });
+      get().addAlert({
+        severity: 'CRITICAL',
+        source: 'HARDWARE_BRIDGE',
+        message: `Failed to isolate Tower ${towerId}: ${err.message || 'Connection error'}. Physical state unchanged.`,
+        is_active: true
+      });
+    }
+  },
+
+  sendHardwareRestoreCommand: async (towerId) => {
+    set(state => ({
+      pendingTowers: { ...state.pendingTowers, [towerId]: true },
+      eventLogs: [
+        {
+          id: `evt-${Date.now()}`,
+          timestamp: new Date().toLocaleTimeString(),
+          event: `[MQTT OUT] RESTORE Tower ${towerId} sent to ESP32 (Awaiting Relay ACK)...`,
+          type: 'MQTT'
+        },
+        ...state.eventLogs
+      ]
+    }));
+
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/hardware/restore/${towerId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'HTTP Command Failed' }));
+        throw new Error(err.detail || 'Hardware restore rejected');
+      }
+
+      get().addAlert({
+        severity: 'INFO',
+        source: 'HARDWARE_BRIDGE',
+        message: `Restore command dispatched: Energizing Tower ${towerId} on physical relay. Waiting for ACK...`,
+        is_active: true
+      });
+    } catch (err: any) {
+      set(state => {
+        const next = { ...state.pendingTowers };
+        delete next[towerId];
+        return { pendingTowers: next };
+      });
+      get().addAlert({
+        severity: 'CRITICAL',
+        source: 'HARDWARE_BRIDGE',
+        message: `Failed to restore Tower ${towerId}: ${err.message || 'Connection error'}. Physical state unchanged.`,
+        is_active: true
+      });
+    }
+  },
+
+  sendHardwareSetAllCommand: async (targetState) => {
+    const allTowers = ['T1', 'T2', 'T3', 'T4', 'T5'];
+    const pendingObj = allTowers.reduce((acc, t) => ({ ...acc, [t]: true }), {});
+    set(state => ({
+      pendingTowers: { ...state.pendingTowers, ...pendingObj },
+      eventLogs: [
+        {
+          id: `evt-${Date.now()}`,
+          timestamp: new Date().toLocaleTimeString(),
+          event: `[MQTT OUT] Batch Command: Set all towers ${targetState} dispatched to ESP32...`,
+          type: 'MQTT'
+        },
+        ...state.eventLogs
+      ]
+    }));
+
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/hardware/set-all`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state: targetState, target_state: targetState })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'HTTP Command Failed' }));
+        throw new Error(err.detail || 'Batch command rejected');
+      }
+
+      get().addAlert({
+        severity: 'INFO',
+        source: 'HARDWARE_BRIDGE',
+        message: `Batch command sent: Set all towers ${targetState}. Waiting for ESP32 confirmation...`,
+        is_active: true
+      });
+    } catch (err: any) {
+      set({ pendingTowers: {} });
+      get().addAlert({
+        severity: 'CRITICAL',
+        source: 'HARDWARE_BRIDGE',
+        message: `Failed to switch all towers: ${err.message || 'Connection error'}.`,
+        is_active: true
+      });
+    }
+  },
+
+  fetchHardwareStatus: async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/hardware/status`);
+      if (res.ok) {
+        const data = await res.json();
+        const dev = data.device || {};
+        const tel = data.telemetry || {};
+
+        set(state => {
+          const isDevOnline = dev.status === 'ONLINE' || data.status === 'ONLINE';
+          const confirmedOutputs = dev.output_states || state.hardwareDevice.output_states;
+
+          return {
+            isBackendConnected: true,
+            mqttConnected: data.mqtt_connected ?? state.mqttConnected,
+            hardwareDevice: {
+              ...state.hardwareDevice,
+              device_id: dev.device_id || state.hardwareDevice.device_id,
+              name: dev.name || state.hardwareDevice.name,
+              status: isDevOnline ? 'ONLINE' : 'OFFLINE',
+              firmware_version: dev.firmware_version || state.hardwareDevice.firmware_version,
+              ip_address: dev.ip_address || state.hardwareDevice.ip_address,
+              last_seen_at: dev.last_seen_at || state.hardwareDevice.last_seen_at,
+              last_heartbeat_at: dev.last_heartbeat_at || state.hardwareDevice.last_heartbeat_at,
+              roundtrip_latency_ms: dev.roundtrip_latency_ms || state.hardwareDevice.roundtrip_latency_ms,
+              output_states: confirmedOutputs,
+              relay_pins: dev.relay_pins || state.hardwareDevice.relay_pins,
+            },
+            ina219Telemetry: {
+              bus_voltage_v: tel.bus_voltage_v || 0.0,
+              shunt_voltage_mv: tel.shunt_voltage_mv || 0.0,
+              current_ma: tel.current_ma || 0.0,
+              power_mw: tel.power_mw || 0.0,
+              sensor_status: tel.sensor_status || 'DISCONNECTED',
+              recorded_at: tel.recorded_at,
+            }
+          };
+        });
+      }
+    } catch {
+      set({ isBackendConnected: false });
+    }
+  },
+
+  handleWebSocketMessage: (type: string, data: any) => {
+    if (type === 'command_ack') {
+      const { output_id, success, reported_state, output_states, latency_ms, error_reason } = data;
+
+      // Clear pending status for affected tower(s)
+      set(state => {
+        const nextPending = { ...state.pendingTowers };
+        if (output_id === 'ALL') {
+          return { pendingTowers: {} };
+        } else if (output_id && nextPending[output_id]) {
+          delete nextPending[output_id];
+        }
+        return { pendingTowers: nextPending };
+      });
+
+      if (success) {
+        const updatedOutputs = { ...get().hardwareDevice.output_states };
+        if (output_states && typeof output_states === 'object') {
+          Object.assign(updatedOutputs, output_states);
+        } else if (output_id && reported_state) {
+          if (output_id === 'ALL') {
+            for (const t of ['T1', 'T2', 'T3', 'T4', 'T5']) {
+              updatedOutputs[t] = reported_state;
+            }
+          } else {
+            updatedOutputs[output_id] = reported_state === 'ISOLATED' ? 'ISOLATED' : reported_state;
+          }
+        }
+
+        // Determine isolated towers list from confirmed hardware state
+        const confirmedIso: ('T1'|'T2'|'T3'|'T4'|'T5')[] = [];
+        for (const t of (['T1', 'T2', 'T3', 'T4', 'T5'] as const)) {
+          if (updatedOutputs[t] === 'ISOLATED' || (output_id === t && reported_state === 'ISOLATED')) {
+            confirmedIso.push(t);
+          }
+        }
+
+        // Sync switch states based on hardware outputs
+        const swMap: Record<string, 'T1'|'T2'|'T3'|'T4'|'T5'> = {
+          'SW-T1': 'T1', 'SW-T2': 'T2', 'SW-T3': 'T3', 'SW-T4': 'T4', 'SW-T5': 'T5'
+        };
+        const updatedSwitches = get().switches.map(s => {
+          const tId = swMap[s.switch_id];
+          const outState = tId ? updatedOutputs[tId] : 'UNKNOWN';
+          const isClosed = outState === 'ON';
+          return {
+            ...s,
+            state: isClosed ? ('CLOSED' as SwitchState) : ('OPEN' as SwitchState),
+            last_operated: `Hardware Confirmed (${reported_state})`,
+            hardware_ack: true
+          };
+        });
+
+        const bypassState = confirmedIso.length > 0 ? 'CLOSED' : get().bypassSwitchState;
+        const connectivity = calculateConnectivity(updatedSwitches, bypassState, confirmedIso);
+        const updatedNodes = get().nodes.map(n => ({
+          ...n,
+          is_energized: connectivity.energized_nodes.includes(n.node_id)
+        }));
+        const updatedLoads = get().loads.map(l => ({
+          ...l,
+          is_energized: connectivity.energized_loads.includes(l.load_id)
+        }));
+
+        set({
+          hardwareDevice: {
+            ...get().hardwareDevice,
+            status: 'ONLINE',
+            output_states: updatedOutputs,
+            roundtrip_latency_ms: latency_ms || 18,
+            last_seen_at: new Date().toISOString()
+          },
+          isolatedTowers: confirmedIso,
+          isolatedTowerId: confirmedIso[0] || null,
+          isT3Isolated: confirmedIso.includes('T3'),
+          bypassSwitchState: bypassState,
+          switches: updatedSwitches,
+          nodes: updatedNodes,
+          loads: updatedLoads,
+          connectivity,
+          eventLogs: [
+            {
+              id: `evt-${Date.now()}`,
+              timestamp: new Date().toLocaleTimeString(),
+              event: `✓ Physical ACK from ESP32: Output ${output_id} confirmed ${reported_state} (${latency_ms || 18}ms latency).`,
+              type: 'HARDWARE'
+            },
+            ...get().eventLogs
+          ]
+        });
+
+        get().addAlert({
+          severity: 'INFO',
+          source: 'HARDWARE_CONFIRM',
+          message: `Hardware Confirmed: ${output_id} is physically ${reported_state}. Virtual 3D twin synchronized.`,
+          is_active: true
+        });
+      } else {
+        get().addAlert({
+          severity: 'CRITICAL',
+          source: 'HARDWARE_ERROR',
+          message: `ESP32 rejected command for ${output_id}: ${error_reason || 'Hardware error'}.`,
+          is_active: true
+        });
+      }
+    } else if (type === 'telemetry') {
+      const { bus_voltage_v, shunt_voltage_mv, current_ma, power_mw, sensor_status, recorded_at } = data;
+      set({
+        ina219Telemetry: {
+          bus_voltage_v: bus_voltage_v || 0.0,
+          shunt_voltage_mv: shunt_voltage_mv || 0.0,
+          current_ma: current_ma || 0.0,
+          power_mw: power_mw || 0.0,
+          sensor_status: sensor_status || 'OK',
+          recorded_at: recorded_at || new Date().toISOString()
+        },
+        hardwareDevice: {
+          ...get().hardwareDevice,
+          status: 'ONLINE',
+          last_seen_at: new Date().toISOString()
+        }
+      });
+    } else if (type === 'device_status' || type === 'hardware_status') {
+      const { status, output_states, ip_address, firmware_version, last_heartbeat_at } = data;
+      const devStatus = status === 'ONLINE' ? 'ONLINE' : 'OFFLINE';
+      set(state => ({
+        hardwareDevice: {
+          ...state.hardwareDevice,
+          status: devStatus,
+          ip_address: ip_address || state.hardwareDevice.ip_address,
+          firmware_version: firmware_version || state.hardwareDevice.firmware_version,
+          output_states: output_states || state.hardwareDevice.output_states,
+          last_heartbeat_at: last_heartbeat_at || state.hardwareDevice.last_heartbeat_at,
+          last_seen_at: new Date().toISOString()
+        }
+      }));
+    }
+  },
+
   syncWithBackendData: (backendData: any) => {
     if (backendData.switches) {
       set({ switches: backendData.switches });
     }
     if (backendData.device) {
       set({ hardwareDevice: backendData.device, isBackendConnected: true });
+    }
+    if (backendData.telemetry) {
+      set({ ina219Telemetry: backendData.telemetry });
     }
   }
 }));

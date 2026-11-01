@@ -25,36 +25,78 @@ export const TransmissionTower3D: React.FC<TransmissionTower3DProps> = ({
 }) => {
   const setSelectedElement = useGridStore((s) => s.setSelectedElement);
   const showLabels = useGridStore((s) => s.showLabels);
+  const hardwareDevice = useGridStore((s) => s.hardwareDevice);
+  const hardwareMode = useGridStore((s) => s.hardwareMode);
+  const pendingTowers = useGridStore((s) => s.pendingTowers);
+  const isolatedTowers = useGridStore((s) => s.isolatedTowers);
+  const ina219Telemetry = useGridStore((s) => s.ina219Telemetry);
+
+  const isPending = !!pendingTowers[towerId];
+  const isOnline = hardwareDevice.status === 'ONLINE';
+  const hwState = hardwareDevice.output_states[towerId] || 'UNKNOWN';
+  // ONLY mark isolated if explicitly in isolatedTowers:
+  const isIsolated = isolatedTowers.includes(towerId as any);
+
+  // Determine effective display state:
+  // Normal state is ENERGIZED (Vivid Cyan-Blue #67e8f9)
+  let effectiveStatus = 'ENERGIZED';
+  let statusText = '110kV TRANSMISSION';
+  let statusColor = '#38bdf8';
+  let glowColor = '#38bdf8';
+  let emissiveColor = '#0284c7';
+
+  if (isIsolated) {
+    // Turn Yellow / Amber ONLY when isolated!
+    effectiveStatus = 'ISOLATED';
+    statusText = 'ISOLATED (0 A)';
+    statusColor = '#f59e0b';
+    glowColor = '#f59e0b';
+    emissiveColor = '#d97706';
+  } else if (!isEnergized) {
+    effectiveStatus = 'OFF';
+    statusText = 'DE-ENERGIZED (OFF)';
+    statusColor = '#94a3b8';
+    glowColor = '#475569';
+    emissiveColor = '#000000';
+  } else if (hardwareMode === 'PHYSICAL' && !isOnline) {
+    effectiveStatus = 'OFFLINE';
+    statusText = 'HARDWARE OFFLINE';
+    statusColor = '#94a3b8';
+    glowColor = '#475569';
+    emissiveColor = '#000000';
+  }
+
   const beaconRef = useRef<THREE.PointLight>(null);
 
   // Night aircraft obstruction beacon blink on top spire
   useFrame(({ clock }) => {
     if (beaconRef.current) {
-      const t = clock.getElapsedTime() * 2;
+      const t = clock.getElapsedTime() * (isPending ? 6 : 2);
       beaconRef.current.intensity = (Math.sin(t * 3) > 0.3) ? 2.5 : 0.2;
     }
   });
 
   const handleClick = (e: any) => {
     e.stopPropagation();
+    const gpioPin = hardwareDevice.relay_pins?.[towerId] || {'T1': 13, 'T2': 14, 'T3': 25, 'T4': 26, 'T5': 27}[towerId];
     setSelectedElement({
       id: towerId,
       type: 'pole',
-      title: `High-Voltage Lattice Transmission Tower ${towerId}`,
+      title: `Distribution Tower ${towerId}`,
       voltage_kv: 110,
-      status: isEnergized ? 'ENERGIZED - NORMAL TRANSMISSION' : 'ISOLATED / DE-ENERGIZED',
-      current_a: isEnergized ? 320.5 : 0,
-      power_kw: isEnergized ? 2173.7 : 0,
+      status: isPending ? 'SWITCHING PENDING ACK' : isIsolated ? 'ISOLATED (0 A - RELAY DE-ENERGIZED)' : isEnergized ? 'ENERGIZED - NORMAL TRANSMISSION' : 'DE-ENERGIZED / OFF',
+      current_a: isEnergized && !isIsolated ? 320.5 : 0,
+      power_kw: isEnergized && !isIsolated ? 430.0 : 0,
       details: {
+        'Physical Relay Pin': `ESP32 GPIO ${gpioPin} -> Relay IN${towerId.replace('T', '')}`,
+        'Hardware State': hwState,
+        'Controller Connection': isOnline ? `Online (${hardwareDevice.roundtrip_latency_ms || 18}ms ACK)` : 'Offline / Unreachable',
+        'Physical Load Current': `${ina219Telemetry.current_ma.toFixed(1)} mA (Total INA219 Bus)`,
+        'Operating Mode': hardwareMode === 'PHYSICAL' ? 'Physical Hardware Synchronized' : 'Virtual Simulation Mode',
         'Tower Class': 'Double-Circuit Galvanized Steel Lattice (Waisted)',
         'Total Height': `${height} meters`,
         'Base Footprint': '4.2m x 4.2m Foundation Pad',
-        'Crossarms': 'Dual-Tier Cantilever Trusses (Upper: 5.6m, Lower: 7.2m)',
-        'Insulator Strings': 'Toughened Glass Disc Suspension (9 Discs per String)',
-        'Shield Wire': 'Optical Ground Wire (OPGW) at Apex',
-        'Phase Arrangement': 'Vertical Double-Circuit (3-Phase AC Transposition)',
-        'Grounding': '4-Leg Driven Copper Rods (Earthing < 2.5Ω)',
-        'Wind Loading': 'Engineered to 160 km/h Gust Velocity'
+        'Safety Disclaimer': 'Low-Voltage Educational Laboratory Model Only'
       }
     });
   };
@@ -133,8 +175,20 @@ export const TransmissionTower3D: React.FC<TransmissionTower3DProps> = ({
   }, [height, scale]);
 
   const h = height * scale;
-  const pylonColor = isEnergized ? '#67e8f9' : '#94a3b8'; // Glowing cyan when energized, silver-grey when isolated
-  const steelMatColor = isEnergized ? '#0891b2' : '#334155';
+  const pylonColor =
+    effectiveStatus === 'ISOLATED'
+      ? '#fbbf24' // Bright Yellow/Gold ONLY when isolated
+      : effectiveStatus === 'OFF'
+      ? '#64748b' // Slate grey when turned off
+      : effectiveStatus === 'OFFLINE'
+      ? '#94a3b8'
+      : '#67e8f9'; // Normal Vivid Cyan/Blue
+  const steelMatColor =
+    effectiveStatus === 'ISOLATED'
+      ? '#b45309'
+      : effectiveStatus === 'OFF'
+      ? '#334155'
+      : '#0891b2';
 
   return (
     <group position={position} rotation={rotation} onClick={handleClick}>
@@ -157,7 +211,7 @@ export const TransmissionTower3D: React.FC<TransmissionTower3DProps> = ({
           color={pylonColor}
           linewidth={2}
           transparent
-          opacity={isEnergized ? 0.95 : 0.6}
+          opacity={effectiveStatus === 'ENERGIZED' ? 0.95 : 0.65}
         />
       </lineSegments>
 
@@ -170,7 +224,7 @@ export const TransmissionTower3D: React.FC<TransmissionTower3DProps> = ({
           color={steelMatColor}
           wireframe
           transparent
-          opacity={isEnergized ? 0.4 : 0.25}
+          opacity={effectiveStatus === 'ENERGIZED' ? 0.4 : 0.25}
           metalness={0.8}
         />
       </mesh>
@@ -199,7 +253,15 @@ export const TransmissionTower3D: React.FC<TransmissionTower3DProps> = ({
               <mesh key={`disc-${dIdx}`} position={[0, dy * scale, 0]}>
                 <cylinderGeometry args={[0.16 * scale, 0.08 * scale, 0.08 * scale, 10]} />
                 <meshStandardMaterial
-                  color={isEnergized ? '#38bdf8' : '#78350f'}
+                  color={
+                    effectiveStatus === 'ENERGIZED'
+                      ? '#38bdf8'
+                      : effectiveStatus === 'ISOLATED'
+                      ? '#ea580c'
+                      : effectiveStatus === 'PENDING'
+                      ? '#f59e0b'
+                      : '#64748b'
+                  }
                   roughness={0.2}
                   metalness={0.3}
                 />
@@ -209,9 +271,9 @@ export const TransmissionTower3D: React.FC<TransmissionTower3DProps> = ({
             <mesh position={[0, -0.85 * scale, 0]}>
               <sphereGeometry args={[0.1 * scale, 8, 8]} />
               <meshStandardMaterial
-                color={isEnergized ? '#38bdf8' : '#64748b'}
-                emissive={isEnergized ? '#0284c7' : '#000000'}
-                emissiveIntensity={isEnergized ? 1.0 : 0}
+                color={glowColor}
+                emissive={emissiveColor}
+                emissiveIntensity={effectiveStatus === 'OFF' || effectiveStatus === 'OFFLINE' ? 0.1 : 1.2}
               />
             </mesh>
           </group>
@@ -231,7 +293,15 @@ export const TransmissionTower3D: React.FC<TransmissionTower3DProps> = ({
               <mesh key={`disc-up-${dIdx}`} position={[0, dy * scale, 0]}>
                 <cylinderGeometry args={[0.16 * scale, 0.08 * scale, 0.08 * scale, 10]} />
                 <meshStandardMaterial
-                  color={isEnergized ? '#38bdf8' : '#78350f'}
+                  color={
+                    effectiveStatus === 'ENERGIZED'
+                      ? '#38bdf8'
+                      : effectiveStatus === 'ISOLATED'
+                      ? '#ea580c'
+                      : effectiveStatus === 'PENDING'
+                      ? '#f59e0b'
+                      : '#64748b'
+                  }
                   roughness={0.2}
                   metalness={0.3}
                 />
@@ -240,9 +310,9 @@ export const TransmissionTower3D: React.FC<TransmissionTower3DProps> = ({
             <mesh position={[0, -0.85 * scale, 0]}>
               <sphereGeometry args={[0.1 * scale, 8, 8]} />
               <meshStandardMaterial
-                color={isEnergized ? '#38bdf8' : '#64748b'}
-                emissive={isEnergized ? '#0284c7' : '#000000'}
-                emissiveIntensity={isEnergized ? 1.0 : 0}
+                color={glowColor}
+                emissive={emissiveColor}
+                emissiveIntensity={effectiveStatus === 'OFF' || effectiveStatus === 'OFFLINE' ? 0.1 : 1.2}
               />
             </mesh>
           </group>
@@ -258,48 +328,26 @@ export const TransmissionTower3D: React.FC<TransmissionTower3DProps> = ({
         {/* Flashing Red Aviation Obstruction Beacon */}
         <mesh position={[0, 0.6 * scale, 0]}>
           <sphereGeometry args={[0.14 * scale, 16, 16]} />
-          <meshBasicMaterial color="#ef4444" />
+          <meshBasicMaterial color={isPending ? '#fbbf24' : '#ef4444'} />
         </mesh>
-        <pointLight ref={beaconRef} position={[0, 0.6 * scale, 0]} color="#ef4444" distance={12 * scale} intensity={2} />
+        <pointLight
+          ref={beaconRef}
+          position={[0, 0.6 * scale, 0]}
+          color={isPending ? '#fbbf24' : '#ef4444'}
+          distance={12 * scale}
+          intensity={2}
+        />
       </group>
 
       {/* Cyber Technical Ground Marker Ring */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
         <ringGeometry args={[2.5 * scale, 2.7 * scale, 32]} />
         <meshBasicMaterial
-          color={isEnergized ? '#06b6d4' : '#475569'}
+          color={glowColor}
           transparent
-          opacity={0.4}
+          opacity={effectiveStatus === 'OFF' || effectiveStatus === 'OFFLINE' ? 0.15 : 0.6}
         />
       </mesh>
-
-      {/* Tower Identifier Label in 3D */}
-      {showLabels && (
-        <group position={[0, h + 1.8 * scale, 0]}>
-          <mesh position={[0, 0, -0.02]}>
-            <planeGeometry args={[2.6, 0.65]} />
-            <meshBasicMaterial color="#0b1329" transparent opacity={0.85} />
-          </mesh>
-          <Text
-            position={[0, 0.1, 0]}
-            fontSize={0.24}
-            color={isEnergized ? '#38bdf8' : '#94a3b8'}
-            anchorX="center"
-            anchorY="middle"
-          >
-            {towerId}
-          </Text>
-          <Text
-            position={[0, -0.15, 0]}
-            fontSize={0.18}
-            color={isEnergized ? '#10b981' : '#ef4444'}
-            anchorX="center"
-            anchorY="middle"
-          >
-            {isEnergized ? '110kV TRANSMISSION' : 'ISOLATED'}
-          </Text>
-        </group>
-      )}
     </group>
   );
 };

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GRIDTWIN - Toll-Free Smart IVR Service</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    
+    <!-- Top Header -->
+    <header class="top-header">
+      <div class="brand">
+        <div class="brand-badge">⚡ GRIDTWIN DIGITAL TWIN</div>
+        <h1>24/7 Automated Toll-Free Helpline</h1>
+        <p class="subtitle">Multi-Lingual IVR for Power Grid Tower Status & Fault Isolation Reporting</p>
+      </div>
+      <div class="quick-status">
+        <div class="status-chip" id="backendStatusChip">
+          <span class="status-dot online"></span>
+          <span id="backendStatusText">Twin Backend: Connected</span>
+        </div>
+        <div class="hotline-chip">
+          <span class="icon">📞</span>
+          <span class="number">1800-419-GRID</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="main-layout">
+      
+      <!-- Left Column: Virtual Phone Dialpad -->
+      <section class="phone-wrapper">
+        <div class="phone-device">
+          
+          <!-- Screen Header -->
+          <div class="phone-screen-header">
+            <div class="carrier-info">
+              <span>GRIDTWIN TEL</span>
+              <span class="signal-bars">●●●●</span>
+            </div>
+            <div class="call-banner">
+              <div class="number-display">1800-419-GRID</div>
+              <div class="call-status" id="callStatusLabel">Ready to Call</div>
+              <div class="call-timer" id="callTimer">00:00</div>
+            </div>
+          </div>
+
+          <!-- Phone Speaker Waveform Visualizer -->
+          <div class="speaker-visualizer" id="speakerVisualizer">
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="speech-label" id="speechBubble">Voice speaker ready</span>
+          </div>
+
+          <!-- Dynamic Prompts Display Screen -->
+          <div class="phone-display-card" id="phoneDisplayCard">
+            <div class="display-text" id="phoneDisplayText">
+              Press the green <strong>"Call Toll-Free"</strong> button below to test the IVR system.
+            </div>
+          </div>
+
+          <!-- Interactive Dialpad -->
+          <div class="dialpad-grid">
+            <button class="key-btn" data-key="1">
+              <span class="num">1</span>
+              <span class="sub">தமிழ் (Tamil)</span>
+            </button>
+            <button class="key-btn" data-key="2">
+              <span class="num">2</span>
+              <span class="sub">English</span>
+            </button>
+            <button class="key-btn" data-key="3">
+              <span class="num">3</span>
+              <span class="sub">हिंदी (Hindi)</span>
+            </button>
+
+            <button class="key-btn" data-key="4">
+              <span class="num">4</span>
+              <span class="sub">Tower 4</span>
+            </button>
+            <button class="key-btn" data-key="5">
+              <span class="num">5</span>
+              <span class="sub">Tower 5</span>
+            </button>
+            <button class="key-btn" data-key="6">
+              <span class="num">6</span>
+              <span class="sub">MNO</span>
+            </button>
+
+            <button class="key-btn" data-key="7">
+              <span class="num">7</span>
+              <span class="sub">PQRS</span>
+            </button>
+            <button class="key-btn" data-key="8">
+              <span class="num">8</span>
+              <span class="sub">TUV</span>
+            </button>
+            <button class="key-btn" data-key="9">
+              <span class="num">9</span>
+              <span class="sub">Change Lang</span>
+            </button>
+
+            <button class="key-btn" data-key="*">
+              <span class="num">*</span>
+              <span class="sub"></span>
+            </button>
+            <button class="key-btn" data-key="0">
+              <span class="num">0</span>
+              <span class="sub">+</span>
+            </button>
+            <button class="key-btn" data-key="#">
+              <span class="num">#</span>
+              <span class="sub"></span>
+            </button>
+          </div>
+
+          <!-- Call Action Controls -->
+          <div class="call-controls">
+            <button class="call-btn btn-call" id="btnStartCall">
+              <span class="icon">📞</span>
+              <span>Call Toll-Free</span>
+            </button>
+            <button class="call-btn btn-hangup" id="btnHangup" disabled>
+              <span class="icon">📵</span>
+              <span>End Call</span>
+            </button>
+          </div>
+
+          <!-- Audio Options -->
+          <div class="audio-options">
+            <label class="toggle-container">
+              <input type="checkbox" id="chkAudioSpeech" checked>
+              <span class="toggle-slider"></span>
+              <span class="toggle-label">Aloud Voice Speech (TTS)</span>
+            </label>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- Right Column: Live Grid & Call Audit Logs -->
+      <section class="side-panel">
+        
+        <!-- Live Towers Status Cards -->
+        <div class="panel-box">
+          <div class="panel-header">
+            <h3>⚡ Live Towers Telemetry (GridTwin Twin)</h3>
+            <button class="btn-refresh" id="btnRefreshTowers" title="Refresh state">🔄</button>
+          </div>
+          <div class="tower-cards-grid" id="towerCardsContainer">
+            <!-- Dynamic Tower Cards Loaded via JS -->
+            <div class="loading-spinner">Loading tower data...</div>
+          </div>
+        </div>
+
+        <!-- Live Call Transcript Log -->
+        <div class="panel-box transcript-box">
+          <div class="panel-header">
+            <h3>📝 Real-Time Call Transcript & DTMF Log</h3>
+            <button class="btn-clear" id="btnClearLog">Clear Log</button>
+          </div>
+          <div class="transcript-log" id="transcriptLog">
+            <div class="log-entry system">
+              <span class="time">--:--</span>
+              <span class="msg">System initialized. Click "Call Toll-Free" to begin.</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Twilio & Deployment Webhook Info Box -->
+        <div class="panel-box twilio-info-box">
+          <h3>🔗 Production Telecom & Webhook Integration</h3>
+          <p>To connect a real carrier Toll-Free number (via Twilio, Exotel, or Tata Tele), configure your webhook to:</p>
+          <div class="code-pill">
+            <span id="webhookUrl">http://YOUR-SERVER-OR-NGROK/ivr/welcome</span>
+            <button id="btnCopyWebhook">Copy</button>
+          </div>
+        </div>
+
+      </section>
+
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
+

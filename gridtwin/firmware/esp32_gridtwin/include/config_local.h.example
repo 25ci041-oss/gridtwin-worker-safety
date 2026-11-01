@@ -1,0 +1,32 @@
+/**
+ * GRIDTWIN Local Configuration Example
+ * 
+ * Copy this file to 'config_local.h' in the same directory:
+ *   cp config_local.h.example config_local.h
+ * 
+ * Then fill in your local Wi-Fi and MQTT broker IP.
+ * 'config_local.h' is ignored by git and will override config.h defaults.
+ */
+
+#ifndef GRIDTWIN_CONFIG_LOCAL_H
+#define GRIDTWIN_CONFIG_LOCAL_H
+
+// Your 2.4GHz Wi-Fi Credentials
+#define WIFI_SSID "YOUR_WIFI_SSID"
+#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+
+// IP address of computer running the MQTT broker (e.g., 192.168.1.50)
+#define MQTT_BROKER "192.168.1.100"
+#define MQTT_PORT 1883
+#define MQTT_USERNAME "gridtwin"
+#define MQTT_PASSWORD_STR "gridtwin_mqtt_secret"
+
+// Device ID (matches backend and frontend registration)
+#define DEVICE_ID "esp32-gridtwin-001"
+
+// Relay Board Trigger Configuration
+// true = Active-LOW (pull pin LOW to turn relay ON - default for optocoupled 8-ch boards)
+// false = Active-HIGH (pull pin HIGH to turn relay ON)
+#define RELAY_ACTIVE_LOW true
+
+#endif // GRIDTWIN_CONFIG_LOCAL_H

@@ -12,35 +12,94 @@ import { EventLogFeed } from './components/dashboard/EventLogFeed';
 import { HardwareBridgePanel } from './components/dashboard/HardwareBridgePanel';
 import { ScenarioLabPanel } from './components/dashboard/ScenarioLabPanel';
 import { ElementInspectorModal } from './components/dashboard/ElementInspectorModal';
+import { TowerDetailsPanel } from './components/dashboard/TowerDetailsPanel';
 
 export function App() {
-  const { activeTab, syncWithBackendData } = useGridStore();
+  const { activeTab, syncWithBackendData, fetchHardwareStatus, handleWebSocketMessage } = useGridStore();
   const [lastUpdatedTime, setLastUpdatedTime] = useState(new Date().toLocaleTimeString('en-US', { hour12: true }));
 
-  // Polling / WebSocket effect to connect with FastAPI backend if running
+  // Polling & Live WebSocket effect for bidirectional hardware communication
   useEffect(() => {
     let isSubscribed = true;
+    let ws: WebSocket | null = null;
+    let wsReconnectTimeout: any = null;
+
+    const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+
+    // Initial hardware state sync
+    fetchHardwareStatus();
 
     const checkBackend = async () => {
       try {
-        const res = await fetch('/api/dashboard/summary');
+        await fetchHardwareStatus();
+        const res = await fetch(`${BACKEND_URL}/api/dashboard/summary`);
         if (res.ok && isSubscribed) {
           const data = await res.json();
           syncWithBackendData(data);
           setLastUpdatedTime(new Date().toLocaleTimeString('en-US', { hour12: true }));
         }
       } catch {
-        // Standalone simulation mode active
+        // Standalone fallback
       }
     };
 
     checkBackend();
-    const interval = setInterval(checkBackend, 3000);
+    const interval = setInterval(checkBackend, 2000);
+
+    // Live WebSocket connection to FastAPI backend
+    const connectWS = () => {
+      if (!isSubscribed) return;
+      let wsUrl = '';
+      if (BACKEND_URL) {
+        const wsProtocol = BACKEND_URL.startsWith('https:') ? 'wss:' : 'ws:';
+        const cleanHost = BACKEND_URL.replace(/^https?:\/\//, '');
+        wsUrl = `${wsProtocol}//${cleanHost}/ws`;
+      } else {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        wsUrl = `${protocol}//${window.location.host}/ws`;
+      }
+
+      try {
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+          ws?.send(JSON.stringify({ type: 'request_state' }));
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            handleWebSocketMessage(msg.type, msg.data || msg);
+          } catch (e) {
+            console.error('WS JSON parse error:', e);
+          }
+        };
+
+        ws.onclose = () => {
+          if (isSubscribed) {
+            wsReconnectTimeout = setTimeout(connectWS, 3000);
+          }
+        };
+
+        ws.onerror = () => {
+          ws?.close();
+        };
+      } catch {
+        if (isSubscribed) {
+          wsReconnectTimeout = setTimeout(connectWS, 3000);
+        }
+      }
+    };
+
+    connectWS();
+
     return () => {
       isSubscribed = false;
       clearInterval(interval);
+      if (wsReconnectTimeout) clearTimeout(wsReconnectTimeout);
+      if (ws) ws.close();
     };
-  }, [syncWithBackendData]);
+  }, [fetchHardwareStatus, handleWebSocketMessage, syncWithBackendData]);
 
   return (
     <div className="h-screen bg-[#060a16] text-slate-100 flex flex-col font-sans select-none overflow-hidden">
@@ -57,33 +116,37 @@ export function App() {
           {/* Top 6-Card KPI Bar - ONLY shown on Home page */}
           {(activeTab === 'dashboard' || (activeTab as any) === 'home') && <KPIBar />}
 
-          {/* Central Dynamic Content Viewport - Full Width, Spacious, No Right Sidebar */}
-          <main className="flex-1 overflow-y-auto p-5 flex flex-col gap-5 bg-[#080e21]">
-            {/* A. DASHBOARD VIEW ("Home"): 2D Schematic + Center Operations Center */}
-            {(activeTab === 'dashboard' || (activeTab as any) === 'home') && (
-              <div className="flex flex-col gap-5">
-                {/* 2D Schematic Grid View */}
-                <SingleLineDiagram />
+          {/* Central Dynamic Content Viewport */}
+          {activeTab === '3d-twin' ? (
+            <main className="flex-1 w-full h-full p-1.5 overflow-hidden flex flex-col bg-[#050b18]">
+              <GridCanvas />
+            </main>
+          ) : (
+            <main className="flex-1 overflow-y-auto p-5 flex flex-col gap-5 bg-[#080e21]">
+              {/* A. DASHBOARD VIEW ("Home"): 2D Schematic + Center Operations Center */}
+              {(activeTab === 'dashboard' || (activeTab as any) === 'home') && (
+                <div className="flex flex-col gap-5">
+                  {/* 2D Schematic Grid View */}
+                  <SingleLineDiagram />
 
-                {/* Operations Center: Grid Operation, Live Readings, Tower Status, Quick Actions, How It Works */}
-                <DashboardOperationsCenter />
-              </div>
-            )}
-
-            {/* B. 3D GRID VIEW: Full-Screen 3D Grid Model */}
-            {activeTab === '3d-twin' && (
-              <div className="w-full h-full flex-1">
-                {/* 3D Canvas Viewport expanded to full height without KPI bar */}
-                <div className="rounded-2xl overflow-hidden border border-slate-800 shadow-2xl relative h-[calc(100vh-105px)] bg-slate-950">
-                  <GridCanvas />
+                  {/* Operations Center: Grid Operation, Live Readings, Tower Status, Quick Actions, How It Works */}
+                  <DashboardOperationsCenter />
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* C. GRID OVERVIEW (SLD Standalone View) */}
+            {/* C. 2D LAB (SLD Schematic View) */}
             {activeTab === 'sld' && (
               <div className="flex flex-col gap-5">
                 <SingleLineDiagram />
+                <SwitchControlPanel />
+              </div>
+            )}
+
+            {/* D. GRID OVERVIEW (Full System Topology, Tower Details & Controls) */}
+            {((activeTab as any) === 'overview' || (activeTab as any) === 'grid-overview') && (
+              <div className="flex flex-col gap-5">
+                <SingleLineDiagram />
+                <TowerDetailsPanel />
                 <SwitchControlPanel />
               </div>
             )}
@@ -122,6 +185,7 @@ export function App() {
               </div>
             )}
           </main>
+        )}
         </div>
       </div>
 

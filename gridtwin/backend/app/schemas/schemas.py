@@ -271,9 +271,20 @@ class OutputMappingResponse(BaseSchema):
 # ──────────────────────────────────────────────
 
 class PhysicalCommandRequest(BaseModel):
-    device_id: str
+    device_id: str = "esp32-gridtwin-001"
     output_id: str
-    requested_state: str = Field(..., pattern="^(ON|OFF)$")
+    requested_state: str = Field(..., pattern="^(ON|OFF|ISOLATED)$")
+    action: Optional[str] = None # "ISOLATE", "RESTORE", "ALL_ON", "ALL_OFF"
+    command_id: Optional[str] = None
+    timeout_seconds: Optional[int] = 15
+
+class HardwareCommandRequest(BaseModel):
+    device_id: Optional[str] = "esp32-gridtwin-001"
+    output_id: str = "ALL"
+    requested_state: Optional[str] = "ON"
+    action: Optional[str] = None
+    command_id: Optional[str] = None
+    timeout_seconds: Optional[int] = 15
 
 class CommandResponse(BaseSchema):
     id: uuid.UUID

@@ -37,7 +37,14 @@ ENV/
 .idea/
 *.suo
 *.ntvs*
-*.njsproj
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Audio cache
+gridtwin toll free/static/audio_cache/*.mp3
+
 *.sln
 *.sw?
 .DS_Store

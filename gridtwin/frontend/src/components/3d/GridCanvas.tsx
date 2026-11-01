@@ -1,6 +1,6 @@
 import React, { Suspense, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Text } from '@react-three/drei';
+import { OrbitControls, Text, Billboard } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGridStore } from '../../store/useGridStore';
 import { SceneEnvironment } from './SceneEnvironment';
@@ -27,7 +27,14 @@ import {
   Zap,
   Box,
   Maximize2,
-  Compass
+  Minimize2,
+  Compass,
+  Power,
+  CheckCircle2,
+  FileText,
+  ArrowLeftRight,
+  Radio,
+  Circle
 } from 'lucide-react';
 
 // Animated Bypass Power Line Component with Green Particles
@@ -82,6 +89,54 @@ const BypassPowerLine: React.FC<{
   );
 };
 
+// Glowing Air-Gap Current Blocking Indicator with Clean 'XX' Side by Side
+const IsolationBarrier3D: React.FC<{
+  position: [number, number, number];
+  label: string;
+}> = ({ position, label }) => {
+  return (
+    <group position={position}>
+      {/* Billboard ensures clean XX always faces camera directly */}
+      <Billboard follow lockX={false} lockY={false} lockZ={false}>
+        {/* Crisp Bold Red 'XX' Side by Side */}
+        <Text
+          position={[0, 0.4, 0]}
+          fontSize={3.4}
+          color="#ef4444"
+          anchorX="center"
+          anchorY="middle"
+          fontWeight="bold"
+          letterSpacing={0.12}
+        >
+          XX
+        </Text>
+
+        {/* Clear Subtext */}
+        <Text
+          position={[0, -1.3, 0]}
+          fontSize={0.7}
+          color="#f87171"
+          anchorX="center"
+          anchorY="middle"
+          fontWeight="bold"
+        >
+          BLOCKED (0 A)
+        </Text>
+
+        <Text
+          position={[0, -1.9, 0]}
+          fontSize={0.46}
+          color="#fca5a5"
+          anchorX="center"
+          anchorY="middle"
+        >
+          {label}
+        </Text>
+      </Billboard>
+    </group>
+  );
+};
+
 export const GridCanvas: React.FC = () => {
   const {
     switches,
@@ -100,8 +155,69 @@ export const GridCanvas: React.FC = () => {
     isolatedTowerId,
     isolatedTowers = [],
     isolateTower,
+    turnTowerOn,
+    turnTowerOff,
+    turnAllTowersOn,
+    turnAllTowersOff,
     restoreNormalOperation,
   } = useGridStore();
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = React.useState(false);
+
+  React.useEffect(() => {
+    const handleFsChange = () => {
+      const isFs = !!document.fullscreenElement || !!(document as any).webkitFullscreenElement;
+      setIsFullscreen(isFs);
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullscreen) {
+        if (document.fullscreenElement || (document as any).webkitFullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        }
+        setIsFullscreen(false);
+      }
+    };
+
+    document.addEventListener('fullscreenchange', handleFsChange);
+    document.addEventListener('webkitfullscreenchange', handleFsChange);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFsChange);
+      document.removeEventListener('webkitfullscreenchange', handleFsChange);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isFullscreen]);
+
+  const toggleFullscreen = async () => {
+    try {
+      const isCurrentlyFs = !!document.fullscreenElement || !!(document as any).webkitFullscreenElement;
+      if (!isCurrentlyFs) {
+        // Enter True Laptop Fullscreen
+        const elem = document.documentElement;
+        if (elem.requestFullscreen) {
+          await elem.requestFullscreen();
+        } else if ((elem as any).webkitRequestFullscreen) {
+          (elem as any).webkitRequestFullscreen();
+        }
+        setIsFullscreen(true);
+      } else {
+        // Exit to Normal Screen
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if ((document as any).webkitExitFullscreen) {
+          (document as any).webkitExitFullscreen();
+        }
+        setIsFullscreen(false);
+      }
+    } catch (err) {
+      console.warn('Native fullscreen toggle exception:', err);
+      // Fallback toggle for full-window mode
+      setIsFullscreen((prev) => !prev);
+    }
+  };
 
   const isoList: ('T1' | 'T2' | 'T3' | 'T4' | 'T5')[] =
     isolatedTowers && isolatedTowers.length > 0
@@ -157,7 +273,7 @@ export const GridCanvas: React.FC = () => {
       category: 'residential' as const,
       loadName: 'Maple Crest Residential Quarter',
       demandKw: 345.5,
-      gpio: 25,
+      gpio: 13,
       height: 14,
     },
     {
@@ -171,7 +287,7 @@ export const GridCanvas: React.FC = () => {
       category: 'commercial' as const,
       loadName: 'Metropolis Commercial Center',
       demandKw: 520.0,
-      gpio: 26,
+      gpio: 14,
       height: 15,
     },
     {
@@ -185,7 +301,7 @@ export const GridCanvas: React.FC = () => {
       category: 'critical' as const,
       loadName: 'Regional Trauma Hospital & ER',
       demandKw: 412.8,
-      gpio: 27,
+      gpio: 25,
       height: 16.5,
     },
     {
@@ -199,7 +315,7 @@ export const GridCanvas: React.FC = () => {
       category: 'industrial' as const,
       loadName: 'Titan Heavy Manufacturing Complex',
       demandKw: 685.0,
-      gpio: 14,
+      gpio: 26,
       height: 15,
     },
     {
@@ -213,7 +329,7 @@ export const GridCanvas: React.FC = () => {
       category: 'renewable' as const,
       loadName: 'Helios Solar Farm & BESS Depot',
       demandKw: 210.4,
-      gpio: 12,
+      gpio: 27,
       height: 14,
     },
   ];
@@ -224,13 +340,22 @@ export const GridCanvas: React.FC = () => {
   const buildingScale = 1.45;
 
   return (
-    <div className="relative w-full h-full min-h-[580px] bg-slate-950 overflow-hidden select-none">
-      {/* 3D WebGL Canvas */}
-      <Canvas
-        shadows
-        camera={{ position: [4, 34, 48], fov: 45 }}
-        gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
-      >
+    <div
+      ref={containerRef}
+      className={`select-none transition-all duration-300 ${
+        isFullscreen
+          ? 'fixed inset-0 z-[9999] w-screen h-screen bg-[#050b18] p-2 flex flex-col gap-2 overflow-hidden'
+          : 'w-full h-full flex flex-col gap-2'
+      }`}
+    >
+      {/* 1. 3D Grid Screen Viewport */}
+      <div className="relative w-full flex-1 min-h-0 rounded-xl overflow-hidden border border-slate-800/90 shadow-2xl bg-slate-950">
+        {/* 3D WebGL Canvas */}
+        <Canvas
+          shadows
+          camera={{ position: [4, 24, 48], fov: 46 }}
+          gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
+        >
         <Suspense fallback={null}>
           <SceneEnvironment />
           <CameraBookmarks />
@@ -299,57 +424,40 @@ export const GridCanvas: React.FC = () => {
             />
 
           {/* ─────────────────────────────────────────────────────────── */}
-          {/* RED DISCONNECTION MARKERS (✕ - - ✕) AROUND ISOLATED TOWERS  */}
+          {/* VISUAL CURRENT BLOCKING BARRIERS AROUND ISOLATED TOWERS      */}
+          {/* Blocks power flow into and out of isolated towers           */}
           {/* ─────────────────────────────────────────────────────────── */}
           {isoList.includes('T1') && (
             <group>
-              {[-43, -41, -39].map((x, i) => (
-                <Text key={`iso-sub-t1-${i}`} position={[x, 13.0, 0]} fontSize={1.4} color="#ef4444" anchorX="center" anchorY="middle" fontWeight="bold">✕</Text>
-              ))}
-              {[-25, -23, -21].map((x, i) => (
-                <Text key={`iso-t1-t2-${i}`} position={[x, 13.0, 0]} fontSize={1.4} color="#ef4444" anchorX="center" anchorY="middle" fontWeight="bold">✕</Text>
-              ))}
+              <IsolationBarrier3D position={[-41, 10.5, 0]} label="T1 IN-FLOW BLOCKED" />
+              <IsolationBarrier3D position={[-23, 10.5, 0]} label="T1 OUT-FLOW BLOCKED" />
             </group>
           )}
 
           {isoList.includes('T2') && (
             <group>
-              {[-25, -23, -21].map((x, i) => (
-                <Text key={`iso-t1-t2-${i}`} position={[x, 13.0, 0]} fontSize={1.4} color="#ef4444" anchorX="center" anchorY="middle" fontWeight="bold">✕</Text>
-              ))}
-              {[-7, -5, -3].map((x, i) => (
-                <Text key={`iso-t2-t3-${i}`} position={[x, 13.0, 0]} fontSize={1.4} color="#ef4444" anchorX="center" anchorY="middle" fontWeight="bold">✕</Text>
-              ))}
+              <IsolationBarrier3D position={[-23, 10.5, 0]} label="T2 IN-FLOW BLOCKED" />
+              <IsolationBarrier3D position={[-5, 10.5, 0]} label="T2 OUT-FLOW BLOCKED" />
             </group>
           )}
 
           {isoList.includes('T3') && (
             <group>
-              {[-7, -5, -3].map((x, i) => (
-                <Text key={`iso-t2-t3-${i}`} position={[x, 13.0, 0]} fontSize={1.4} color="#ef4444" anchorX="center" anchorY="middle" fontWeight="bold">✕</Text>
-              ))}
-              {[11, 13, 15].map((x, i) => (
-                <Text key={`iso-t3-t4-${i}`} position={[x, 13.0, 0]} fontSize={1.4} color="#ef4444" anchorX="center" anchorY="middle" fontWeight="bold">✕</Text>
-              ))}
+              <IsolationBarrier3D position={[-5, 10.5, 0]} label="T3 IN-FLOW BLOCKED" />
+              <IsolationBarrier3D position={[13, 10.5, 0]} label="T3 OUT-FLOW BLOCKED" />
             </group>
           )}
 
           {isoList.includes('T4') && (
             <group>
-              {[11, 13, 15].map((x, i) => (
-                <Text key={`iso-t3-t4-${i}`} position={[x, 13.0, 0]} fontSize={1.4} color="#ef4444" anchorX="center" anchorY="middle" fontWeight="bold">✕</Text>
-              ))}
-              {[29, 31, 33].map((x, i) => (
-                <Text key={`iso-t4-t5-${i}`} position={[x, 13.0, 0]} fontSize={1.4} color="#ef4444" anchorX="center" anchorY="middle" fontWeight="bold">✕</Text>
-              ))}
+              <IsolationBarrier3D position={[13, 10.5, 0]} label="T4 IN-FLOW BLOCKED" />
+              <IsolationBarrier3D position={[31, 10.5, 0]} label="T4 OUT-FLOW BLOCKED" />
             </group>
           )}
 
           {isoList.includes('T5') && (
             <group>
-              {[29, 31, 33].map((x, i) => (
-                <Text key={`iso-t4-t5-${i}`} position={[x, 13.0, 0]} fontSize={1.4} color="#ef4444" anchorX="center" anchorY="middle" fontWeight="bold">✕</Text>
-              ))}
+              <IsolationBarrier3D position={[31, 10.5, 0]} label="T5 IN-FLOW BLOCKED" />
             </group>
           )}
 
@@ -448,33 +556,44 @@ export const GridCanvas: React.FC = () => {
 
             return (
               <React.Fragment key={sec.id}>
-                {/* Tower Label Badge */}
+                {/* Modern Sleek Tower Badge matching reference design */}
                 {showLabels && (
-                  <group position={[sec.towerPos[0], sec.height * towerScale + 2.5, sec.towerPos[2]]}>
-                    <mesh position={[0, 0, 0]}>
-                      <planeGeometry args={[isThisIsolated ? 5.6 : 4.4, 1.4]} />
-                      <meshBasicMaterial color="#0f172a" transparent opacity={0.88} />
+                  <Billboard
+                    position={[sec.towerPos[0], sec.height * towerScale + 3.2, sec.towerPos[2]]}
+                    follow
+                    lockX={false}
+                    lockY={false}
+                    lockZ={false}
+                  >
+                    <mesh position={[0, 0, -0.05]}>
+                      <planeGeometry args={[isThisIsolated ? 4.2 : 3.4, 1.6]} />
+                      <meshBasicMaterial color="#071126" transparent opacity={0.88} />
                     </mesh>
+                    <lineSegments>
+                      <edgesGeometry args={[new THREE.PlaneGeometry(isThisIsolated ? 4.2 : 3.4, 1.6)]} />
+                      <lineBasicMaterial color={isThisIsolated ? '#ef4444' : '#0284c7'} linewidth={1.5} />
+                    </lineSegments>
                     <Text
-                      position={[0, 0.25, 0.05]}
-                      fontSize={0.6}
-                      color={isThisIsolated ? '#ef4444' : '#38bdf8'}
+                      position={[0, 0.28, 0.05]}
+                      fontSize={0.48}
+                      color="#ffffff"
                       anchorX="center"
                       anchorY="middle"
                       fontWeight="bold"
                     >
-                      {sec.id} {isThisIsolated ? '• ISOLATED' : '• LIVE'}
+                      {sec.name.split(' (')[0]}
                     </Text>
                     <Text
-                      position={[0, -0.3, 0.05]}
-                      fontSize={0.38}
-                      color={isThisIsolated ? '#f87171' : '#4ade80'}
+                      position={[0, -0.28, 0.05]}
+                      fontSize={0.4}
+                      color={isThisIsolated ? '#ef4444' : '#10b981'}
                       anchorX="center"
                       anchorY="middle"
+                      fontWeight="bold"
                     >
-                      {isThisIsolated ? 'NO CURRENT FLOW (0 A)' : `${sec.demandKw} kW ACTIVE`}
+                      {isThisIsolated ? '● ISOLATED' : '● ON'}
                     </Text>
-                  </group>
+                  </Billboard>
                 )}
 
                 {/* High-Voltage Steel Lattice Transmission Tower (Pylon) */}
@@ -561,107 +680,7 @@ export const GridCanvas: React.FC = () => {
         </Suspense>
       </Canvas>
 
-      {/* Floating System Status & Universal Multi-Tower Contingency Console */}
-      <div className="absolute top-4 left-4 z-10 flex flex-col gap-2 max-w-2xl">
-        {/* Main Model Title */}
-        <div className="bg-slate-900/90 backdrop-blur-md border border-slate-700/70 rounded-xl px-3.5 py-2 shadow-2xl">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse" />
-            <h2 className="text-xs font-bold text-white tracking-wide">
-              GridTwin — Five-Tower Transmission & Universal Front Bypass Grid
-            </h2>
-          </div>
-          <p className="text-[11px] text-slate-300 font-mono mt-0.5">
-            {isBypassClosed && isoList.length > 0
-              ? `Bypass ON: Isolation connection active around [${isoList.join(', ')}] (0 A) | Remaining towers powered via alternate bypass route`
-              : !isBypassClosed && isoList.length > 0
-              ? `ALERT: Bypass is OPEN while Tower(s) [${isoList.join(', ')}] Isolated! Turn Bypass ON to restore downstream power.`
-              : isBypassClosed
-              ? 'Bypass ON: Alternate bypass bus energized in parallel (standby ready) | All 5 towers energized'
-              : 'Normal Connection: All 5 towers energized via main transmission route | Bypass standby'}
-          </p>
-        </div>
-
-        {/* Universal Multi-Tower Contingency Action Bar */}
-        <div className="flex flex-wrap items-center gap-2 bg-slate-900/90 backdrop-blur-md border border-slate-700/70 rounded-xl p-2 shadow-2xl">
-          <span className="text-[11px] font-bold text-slate-300 font-mono flex items-center gap-1">
-            <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-            <span>Isolate Tower:</span>
-          </span>
-
-          {(['T1', 'T2', 'T3', 'T4', 'T5'] as const).map((tId) => {
-            const isThisIsolated = isoList.includes(tId);
-            return (
-              <button
-                key={tId}
-                onClick={() => isolateTower(tId)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold font-mono transition-all shadow-sm ${
-                  isThisIsolated
-                    ? 'bg-rose-600 text-white ring-2 ring-rose-400'
-                    : 'bg-slate-800 text-slate-300 hover:bg-rose-950/80 hover:text-rose-300 border border-slate-700'
-                }`}
-                title={`Click to isolate ${tId} with bypass`}
-              >
-                {isThisIsolated ? `✕ ${tId} Isolated` : tId}
-              </button>
-            );
-          })}
-
-          <div className="h-4 w-[1px] bg-slate-700 mx-1" />
-
-          {/* Restore Normal All Towers */}
-          <button
-            onClick={restoreNormalOperation}
-            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 shadow-sm ${
-              !isBypassClosed && isoList.length === 0
-                ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
-                : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20'
-            }`}
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Normal Connection</span>
-          </button>
-
-          <div className="h-4 w-[1px] bg-slate-700 mx-1" />
-
-          {/* Bypass Bus State Toggle */}
-          <button
-            onClick={toggleBypassSwitch}
-            className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all flex items-center gap-1.5 border ${
-              isBypassClosed
-                ? 'bg-emerald-950 text-emerald-400 border-emerald-500/50'
-                : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
-            }`}
-            title="Toggle Front Bypass Bus State"
-          >
-            <span className="text-slate-400">Bypass Bus:</span>
-            <span className={isBypassClosed ? 'text-emerald-300 font-black' : 'text-slate-400'}>
-              {bypassSwitchState}
-            </span>
-          </button>
-        </div>
-      </div>
-
-      {/* Stability Badge (Top Right) */}
-      <div className="absolute top-4 right-16 z-10 flex items-center gap-2 bg-slate-900/90 backdrop-blur-md border border-slate-700/70 rounded-xl px-3 py-1.5 shadow-2xl">
-        <ShieldCheck className="w-4 h-4 text-emerald-400" />
-        <div className="text-left font-mono">
-          <span className="text-[11px] font-bold text-emerald-400 block">
-            {isoList.length > 0
-              ? (isBypassClosed ? 'Bypass Isolation Active' : 'Downstream Unserved')
-              : (isBypassClosed ? 'Bypass Standby Ready' : 'Normal Grid Operation')}
-          </span>
-          <span className="text-[10px] text-slate-300">
-            {isoList.length > 0
-              ? (isBypassClosed
-                  ? `Towers [${isoList.join(', ')}] Isolated (0 A) | Remaining Supplied via Bypass`
-                  : `Towers [${isoList.join(', ')}] Isolated (0 A) | Turn Bypass ON to Supply Downstream`)
-              : 'T1–T5 All Supplied via Main Transmission Route'}
-          </span>
-        </div>
-      </div>
-
-      {/* Floating HUD Viewport Controls (Top Far Right) */}
+      {/* Floating HUD Viewport Controls (Top Right - Minimal Icons Only) */}
       <div className="absolute top-4 right-4 z-10 flex flex-col gap-1.5 bg-slate-900/85 backdrop-blur-md border border-slate-700/60 rounded-xl p-1.5 shadow-2xl">
         <button
           onClick={toggleNightMode}
@@ -700,74 +719,211 @@ export const GridCanvas: React.FC = () => {
         </button>
       </div>
 
-      {/* Navigation Compass & Viewport Tooling matching Reference Screenshot */}
-      <div className="absolute bottom-4 left-4 z-10 flex flex-col items-start gap-3 select-none">
-        {/* Circular Nav Compass */}
-        <div className="relative w-16 h-16 rounded-full bg-slate-900/80 border border-slate-700/70 backdrop-blur-md flex items-center justify-center shadow-xl">
-          <span className="absolute top-1 text-[9px] font-bold text-cyan-400 font-mono">N</span>
-          <span className="absolute bottom-1 text-[9px] font-bold text-slate-500 font-mono">S</span>
-          <span className="absolute left-1.5 text-[9px] font-bold text-slate-500 font-mono">W</span>
-          <span className="absolute right-1.5 text-[9px] font-bold text-slate-500 font-mono">E</span>
-          <div className="w-10 h-10 rounded-full border border-slate-700/40 flex items-center justify-center">
-            <Compass className="w-6 h-6 text-cyan-400/80 transform rotate-45" />
+        {/* Navigation Compass & View Mode Toolbar (Bottom Left inside 3D screen) */}
+        <div className="absolute bottom-4 left-4 z-10 flex items-center gap-2 select-none">
+          {/* Circular Nav Compass */}
+          <div className="relative w-10 h-10 rounded-full bg-slate-900/90 border border-slate-700/70 backdrop-blur-md flex items-center justify-center shadow-xl">
+            <span className="absolute top-0.5 text-[7px] font-bold text-cyan-400 font-mono">N</span>
+            <Compass className="w-5 h-5 text-cyan-400/80 transform rotate-45" />
+          </div>
+
+          {/* View Mode Toolbar */}
+          <div className="flex items-center gap-1.5 bg-slate-900/90 backdrop-blur-md border border-slate-700/70 rounded-xl p-1.5 shadow-2xl">
+            <button
+              onClick={() => setCameraPreset('overview')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                cameraPreset === 'overview'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Box className="w-3.5 h-3.5" />
+              <span>3D View</span>
+            </button>
+
+            <button
+              onClick={() => setCameraPreset('top')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                cameraPreset === 'top'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Top View</span>
+            </button>
+
+            <button
+              onClick={() => setCameraPreset('side')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                cameraPreset === 'side'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Camera className="w-3.5 h-3.5" />
+              <span>Side View</span>
+            </button>
+
+            <div className="h-4 w-[1px] bg-slate-700 mx-0.5" />
+
+            <button
+              onClick={toggleFullscreen}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-md active:scale-95 ${
+                isFullscreen
+                  ? 'bg-cyan-600 text-white shadow-cyan-600/30 ring-1 ring-cyan-400'
+                  : 'text-slate-200 hover:text-white bg-slate-800/80 hover:bg-slate-700 border border-slate-700'
+              }`}
+              title={isFullscreen ? 'Exit Full Screen Mode' : 'Expand 3D Grid to Full Screen'}
+            >
+              {isFullscreen ? (
+                <>
+                  <Minimize2 className="w-4 h-4 text-cyan-200" />
+                  <span>Exit Full Screen</span>
+                </>
+              ) : (
+                <>
+                  <Maximize2 className="w-4 h-4 text-cyan-400" />
+                  <span>Full Screen</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. MODERN THREE-PANEL CONTROL CONSOLE (COMPACT TO MAXIMIZE 3D GRID SCREEN) */}
+      <div className="bg-[#071126]/95 border border-slate-800/90 rounded-xl p-2 shadow-2xl flex flex-col gap-1.5 shrink-0 select-none">
+        {/* Row 1: 3 Modular Command Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-stretch">
+
+          {/* Panel 1: Grid Master */}
+          <div className="md:col-span-4 bg-slate-900/75 border border-slate-800/90 rounded-lg px-3 py-1.5 flex items-center justify-between gap-2.5 shadow-md">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-7 h-7 rounded-md bg-blue-600/25 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0 shadow-sm">
+                <FileText className="w-3.5 h-3.5" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-xs font-extrabold text-white tracking-wide truncate">Grid Master</h3>
+                <p className="text-[10px] text-slate-400 truncate">Control all towers together</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                onClick={turnAllTowersOn}
+                className="px-3 py-1 rounded-full text-xs font-black bg-emerald-500 hover:bg-emerald-400 text-slate-950 flex items-center gap-1 shadow-md shadow-emerald-500/25 transition-all active:scale-95"
+                title="Energize ALL 5 towers (Powers relays and turns ON all tower LEDs)"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>ALL ON</span>
+              </button>
+
+              <button
+                onClick={turnAllTowersOff}
+                className="px-3 py-1 rounded-full text-xs font-black bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center gap-1 shadow-sm transition-all active:scale-95"
+                title="Isolate / Turn OFF ALL 5 towers"
+              >
+                <Power className="w-3.5 h-3.5 text-slate-400" />
+                <span>ALL OFF</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Panel 2: Bypass Bus */}
+          <div className="md:col-span-3 bg-slate-900/75 border border-slate-800/90 rounded-lg px-3 py-1.5 flex items-center justify-between gap-2.5 shadow-md">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-7 h-7 rounded-md bg-cyan-600/25 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shrink-0 shadow-sm">
+                <ArrowLeftRight className="w-3.5 h-3.5" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-xs font-extrabold text-white tracking-wide truncate">Bypass Bus</h3>
+                <p className="text-[10px] text-slate-400 truncate">Open / Close bypass line</p>
+              </div>
+            </div>
+
+            <button
+              onClick={toggleBypassSwitch}
+              className={`px-3 py-1 rounded-full text-xs font-mono font-bold flex items-center gap-1.5 border transition-all active:scale-95 shrink-0 ${
+                isBypassClosed
+                  ? 'bg-emerald-950/90 text-emerald-300 border-emerald-500/70 shadow-sm shadow-emerald-500/20'
+                  : 'bg-cyan-950/40 text-cyan-300 border-cyan-500/60 hover:bg-cyan-900/50'
+              }`}
+              title="Toggle Front Bypass Bus State"
+            >
+              <Circle className="w-2 h-2 text-cyan-400 fill-cyan-400" />
+              <span>{bypassSwitchState}</span>
+            </button>
+          </div>
+
+          {/* Panel 3: Individual Towers */}
+          <div className="md:col-span-5 bg-slate-900/75 border border-slate-800/90 rounded-lg px-3 py-1.5 flex items-center justify-between gap-2.5 shadow-md">
+            <div className="flex items-center gap-2 shrink-0 min-w-0">
+              <div className="w-7 h-7 rounded-md bg-indigo-600/25 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shrink-0 shadow-sm">
+                <Radio className="w-3.5 h-3.5" />
+              </div>
+              <div className="min-w-0 hidden xl:block">
+                <h3 className="text-xs font-extrabold text-white tracking-wide truncate">Individual Towers</h3>
+                <p className="text-[10px] text-slate-400 truncate">Control each tower separately</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 overflow-x-auto justify-end flex-1">
+              {sections.map((sec) => {
+                const tId = sec.id;
+                const isThisIsolated = isoList.includes(tId);
+                return (
+                  <div
+                    key={tId}
+                    className="flex flex-col items-center gap-0.5 px-2 py-0.5 rounded-lg bg-slate-950/80 border border-slate-800 min-w-[44px]"
+                  >
+                    <span className="text-[10px] font-mono font-extrabold text-slate-300">{tId}</span>
+                    <button
+                      onClick={() => isolateTower(tId)}
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-black font-mono tracking-wider transition-all active:scale-95 ${
+                        !isThisIsolated
+                          ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-sm shadow-emerald-500/30'
+                          : 'bg-rose-600 hover:bg-rose-500 text-white shadow-sm shadow-rose-500/30 ring-1 ring-rose-400'
+                      }`}
+                      title={isThisIsolated ? `Tower ${tId} is ISOLATED. Click to restore.` : `Tower ${tId} is ON. Click to isolate.`}
+                    >
+                      {isThisIsolated ? 'OFF' : 'ON'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
 
-        {/* View Mode Toolbar */}
-        <div className="flex items-center gap-1.5 bg-slate-900/90 backdrop-blur-md border border-slate-700/70 rounded-2xl p-1.5 shadow-2xl">
-          <button
-            onClick={() => setCameraPreset('overview')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-              cameraPreset === 'overview'
-                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
-                : 'text-slate-300 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <Box className="w-3.5 h-3.5" />
-            <span>3D View</span>
-          </button>
+        {/* Row 2: Bottom Status Strip */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800/70">
+          {/* Left Pill */}
+          <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-[11px] font-mono font-semibold">
+            <span className={`w-1.5 h-1.5 rounded-full ${isoList.length > 0 ? (isBypassClosed ? 'bg-amber-400 animate-pulse' : 'bg-rose-500 animate-pulse') : 'bg-emerald-400 animate-pulse'}`} />
+            <span className={isoList.length > 0 ? (isBypassClosed ? 'text-amber-300' : 'text-rose-300') : 'text-emerald-300'}>
+              {isoList.length > 0
+                ? (isBypassClosed ? `Bypass Active (Isolated: ${isoList.join(', ')})` : `Alert: Isolated ${isoList.join(', ')} (Unserved)`)
+                : 'Normal Grid Operation'}
+            </span>
+          </div>
 
-          <button
-            onClick={() => setCameraPreset('top')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-              cameraPreset === 'top'
-                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
-                : 'text-slate-300 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span>Top View</span>
-          </button>
-
-          <button
-            onClick={() => setCameraPreset('side')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-              cameraPreset === 'side'
-                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
-                : 'text-slate-300 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <Camera className="w-3.5 h-3.5" />
-            <span>Side View</span>
-          </button>
-
-          <div className="h-4 w-[1px] bg-slate-700 mx-0.5" />
-
-          <button
-            onClick={() => {
-              const elem = document.documentElement;
-              if (!document.fullscreenElement) {
-                elem.requestFullscreen?.().catch(() => {});
-              } else {
-                document.exitFullscreen?.().catch(() => {});
-              }
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-300 hover:text-white hover:bg-slate-800 transition-all"
-            title="Toggle Fullscreen"
-          >
-            <Maximize2 className="w-3.5 h-3.5" />
-            <span>Full Screen</span>
-          </button>
+          {/* Right Tower Status Indicators */}
+          <div className="flex items-center gap-3 text-[11px] font-mono">
+            {sections.map((sec) => {
+              const tId = sec.id;
+              const isThisIsolated = isoList.includes(tId);
+              return (
+                <div key={`status-${tId}`} className="flex items-center gap-1">
+                  <span className="text-slate-400 font-bold">{tId}</span>
+                  <span className={`w-1.5 h-1.5 rounded-full ${isThisIsolated ? 'bg-rose-500' : 'bg-cyan-400'}`} />
+                  <span className={`text-[10px] font-bold ${isThisIsolated ? 'text-rose-400' : 'text-cyan-300'}`}>
+                    {isThisIsolated ? 'OFF' : 'ON'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>
