@@ -124,14 +124,14 @@ export function App() {
 
           {/* Central Dynamic Content Viewport */}
           {activeTab === '3d-twin' ? (
-            <main className="flex-1 w-full h-full p-1.5 overflow-hidden flex flex-col bg-[#050b18]">
+            <main className="flex-1 w-full h-full p-1 sm:p-1.5 overflow-hidden flex flex-col bg-[#050b18]">
               <GridCanvas />
             </main>
           ) : (
-            <main className="flex-1 overflow-y-auto p-5 flex flex-col gap-5 bg-[#080e21]">
+            <main className="flex-1 overflow-y-auto p-3 sm:p-5 flex flex-col gap-3.5 sm:gap-5 bg-[#080e21]">
               {/* A. DASHBOARD VIEW ("Home"): 2D Schematic + Center Operations Center */}
               {(activeTab === 'dashboard' || (activeTab as any) === 'home') && (
-                <div className="flex flex-col gap-5">
+                <div className="flex flex-col gap-3.5 sm:gap-5">
                   {/* 2D Schematic Grid View */}
                   <SingleLineDiagram />
 

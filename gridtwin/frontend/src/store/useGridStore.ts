@@ -45,6 +45,9 @@ interface GridState {
 
   // UI & View state
   activeTab: 'dashboard' | '3d-twin' | 'sld' | 'hardware' | 'analytics' | 'scenarios' | 'monitoring' | 'devices' | 'alerts' | 'settings' | 'overview';
+  isMobileNavOpen: boolean;
+  setMobileNavOpen: (open: boolean) => void;
+  toggleMobileNav: () => void;
   selectedElement: SelectedElement | null;
   cameraPreset: 'overview' | 'substation' | 'feeder1-3' | 'feeder4-5' | 'loads' | 'top' | 'side';
   isNightMode: boolean;
@@ -329,6 +332,9 @@ export const useGridStore = create<GridState>((set, get) => ({
   },
 
   activeTab: 'dashboard',
+  isMobileNavOpen: false,
+  setMobileNavOpen: (open: boolean) => set({ isMobileNavOpen: open }),
+  toggleMobileNav: () => set((state) => ({ isMobileNavOpen: !state.isMobileNavOpen })),
   selectedElement: null,
   cameraPreset: 'overview',
   isNightMode: true,

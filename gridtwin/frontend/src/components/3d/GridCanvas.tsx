@@ -681,7 +681,7 @@ export const GridCanvas: React.FC = () => {
       </Canvas>
 
       {/* Floating HUD Viewport Controls (Top Right - Minimal Icons Only) */}
-      <div className="absolute top-4 right-4 z-10 flex flex-col gap-1.5 bg-slate-900/85 backdrop-blur-md border border-slate-700/60 rounded-xl p-1.5 shadow-2xl">
+      <div className="absolute top-2 sm:top-4 right-2 sm:right-4 z-10 flex flex-col gap-1 sm:gap-1.5 bg-slate-900/85 backdrop-blur-md border border-slate-700/60 rounded-xl p-1 sm:p-1.5 shadow-2xl">
         <button
           onClick={toggleNightMode}
           title={isNightMode ? 'Switch to Day Light' : 'Switch to Night Glow'}
@@ -720,56 +720,56 @@ export const GridCanvas: React.FC = () => {
       </div>
 
         {/* Navigation Compass & View Mode Toolbar (Bottom Left inside 3D screen) */}
-        <div className="absolute bottom-4 left-4 z-10 flex items-center gap-2 select-none">
+        <div className="absolute bottom-2 sm:bottom-4 left-2 sm:left-4 z-10 flex items-center gap-1.5 sm:gap-2 select-none">
           {/* Circular Nav Compass */}
-          <div className="relative w-10 h-10 rounded-full bg-slate-900/90 border border-slate-700/70 backdrop-blur-md flex items-center justify-center shadow-xl">
+          <div className="hidden xs:flex relative w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-slate-900/90 border border-slate-700/70 backdrop-blur-md items-center justify-center shadow-xl shrink-0">
             <span className="absolute top-0.5 text-[7px] font-bold text-cyan-400 font-mono">N</span>
-            <Compass className="w-5 h-5 text-cyan-400/80 transform rotate-45" />
+            <Compass className="w-4 h-4 sm:w-5 sm:h-5 text-cyan-400/80 transform rotate-45" />
           </div>
 
           {/* View Mode Toolbar */}
-          <div className="flex items-center gap-1.5 bg-slate-900/90 backdrop-blur-md border border-slate-700/70 rounded-xl p-1.5 shadow-2xl">
+          <div className="flex items-center gap-1 bg-slate-900/90 backdrop-blur-md border border-slate-700/70 rounded-xl p-1 sm:p-1.5 shadow-2xl">
             <button
               onClick={() => setCameraPreset('overview')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+              className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
                 cameraPreset === 'overview'
                   ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800'
               }`}
             >
               <Box className="w-3.5 h-3.5" />
-              <span>3D View</span>
+              <span className="hidden xs:inline">3D</span>
             </button>
 
             <button
               onClick={() => setCameraPreset('top')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+              className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
                 cameraPreset === 'top'
                   ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800'
               }`}
             >
               <Layers className="w-3.5 h-3.5" />
-              <span>Top View</span>
+              <span className="hidden xs:inline">Top</span>
             </button>
 
             <button
               onClick={() => setCameraPreset('side')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+              className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
                 cameraPreset === 'side'
                   ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800'
               }`}
             >
               <Camera className="w-3.5 h-3.5" />
-              <span>Side View</span>
+              <span className="hidden xs:inline">Side</span>
             </button>
 
             <div className="h-4 w-[1px] bg-slate-700 mx-0.5" />
 
             <button
               onClick={toggleFullscreen}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-md active:scale-95 ${
+              className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg text-xs font-bold transition-all shadow-md active:scale-95 ${
                 isFullscreen
                   ? 'bg-cyan-600 text-white shadow-cyan-600/30 ring-1 ring-cyan-400'
                   : 'text-slate-200 hover:text-white bg-slate-800/80 hover:bg-slate-700 border border-slate-700'
@@ -778,13 +778,13 @@ export const GridCanvas: React.FC = () => {
             >
               {isFullscreen ? (
                 <>
-                  <Minimize2 className="w-4 h-4 text-cyan-200" />
-                  <span>Exit Full Screen</span>
+                  <Minimize2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-cyan-200" />
+                  <span className="hidden sm:inline">Exit</span>
                 </>
               ) : (
                 <>
-                  <Maximize2 className="w-4 h-4 text-cyan-400" />
-                  <span>Full Screen</span>
+                  <Maximize2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-cyan-400" />
+                  <span className="hidden sm:inline">Full</span>
                 </>
               )}
             </button>
@@ -793,9 +793,9 @@ export const GridCanvas: React.FC = () => {
       </div>
 
       {/* 2. MODERN THREE-PANEL CONTROL CONSOLE (COMPACT TO MAXIMIZE 3D GRID SCREEN) */}
-      <div className="bg-[#071126]/95 border border-slate-800/90 rounded-xl p-2 shadow-2xl flex flex-col gap-1.5 shrink-0 select-none">
+      <div className="bg-[#071126]/95 border border-slate-800/90 rounded-xl p-1.5 sm:p-2 shadow-2xl flex flex-col gap-1.5 shrink-0 select-none">
         {/* Row 1: 3 Modular Command Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-stretch">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-1.5 sm:gap-2 items-stretch">
 
           {/* Panel 1: Grid Master */}
           <div className="md:col-span-4 bg-slate-900/75 border border-slate-800/90 rounded-lg px-3 py-1.5 flex items-center justify-between gap-2.5 shadow-md">
