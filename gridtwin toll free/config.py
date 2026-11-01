@@ -14,7 +14,14 @@ TOLL_FREE_NUMBER = os.getenv("TOLL_FREE_NUMBER", "1800-419-GRID")
 TOLL_FREE_E164 = os.getenv("TOLL_FREE_E164", "+18004194743")
 
 # GridTwin Backend Connection
-GRIDTWIN_BACKEND_URL = os.getenv("GRIDTWIN_BACKEND_URL", "http://localhost:8000")
+GRIDTWIN_BACKEND_URL = os.getenv("GRIDTWIN_BACKEND_URL")
+if not GRIDTWIN_BACKEND_URL:
+    # If running on Render, automatically route to the live Render backend service
+    if os.getenv("RENDER"):
+        GRIDTWIN_BACKEND_URL = "https://gridtwin-backend.onrender.com"
+    else:
+        GRIDTWIN_BACKEND_URL = "http://localhost:8000"
+
 BACKEND_TIMEOUT_SECONDS = float(os.getenv("BACKEND_TIMEOUT_SECONDS", "3.0"))
 
 # Twilio Credentials (Optional for local testing, required for real phone carrier hookup)

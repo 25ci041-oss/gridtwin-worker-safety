@@ -1209,6 +1209,15 @@ async def isolate_tower_endpoint(tower_id: str):
     if tid not in ["T1", "T2", "T3", "T4", "T5"]:
         raise HTTPException(status_code=400, detail=f"Invalid tower ID {tower_id}. Must be T1-T5.")
     
+    # Synchronize authoritative state immediately for instant IVR telephone & 3D UI updates
+    hardware_state["output_states"][tid] = "OFF"
+    sw_map = {"T1": "SW1", "T2": "SW2", "T3": "SW3", "T4": "SW4", "T5": "SW5"}
+    if tid in sw_map:
+        try:
+            simulator.operate_switch(sw_map[tid], "OPEN")
+        except Exception:
+            pass
+    
     return await send_physical_command(PhysicalCommandRequest(
         device_id="esp32-gridtwin-001",
         output_id=tid,
@@ -1229,6 +1238,15 @@ async def restore_tower_endpoint(tower_id: str):
     if tid not in ["T1", "T2", "T3", "T4", "T5"]:
         raise HTTPException(status_code=400, detail=f"Invalid tower ID {tower_id}. Must be T1-T5.")
     
+    # Synchronize authoritative state immediately for instant IVR telephone & 3D UI updates
+    hardware_state["output_states"][tid] = "ON"
+    sw_map = {"T1": "SW1", "T2": "SW2", "T3": "SW3", "T4": "SW4", "T5": "SW5"}
+    if tid in sw_map:
+        try:
+            simulator.operate_switch(sw_map[tid], "CLOSED")
+        except Exception:
+            pass
+    
     return await send_physical_command(PhysicalCommandRequest(
         device_id="esp32-gridtwin-001",
         output_id=tid,
@@ -1244,6 +1262,11 @@ async def set_all_towers_endpoint(payload: dict):
     """Batch energize or de-energize all five towers simultaneously."""
     state = (payload.get("state") or payload.get("target_state") or "ON").upper()
     action = "ALL_ON" if state == "ON" else "ALL_OFF"
+    
+    # Synchronize all tower output states immediately
+    for t in ["T1", "T2", "T3", "T4", "T5"]:
+        hardware_state["output_states"][t] = state
+    
     return await send_physical_command(PhysicalCommandRequest(
         device_id="esp32-gridtwin-001",
         output_id="ALL",
