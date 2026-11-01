@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     app_version: str = "1.0.0"
     debug: bool = False
     backend_secret_key: str = "change-this-to-a-random-secret-key"
-    backend_cors_origins: str = "http://localhost:5173,http://localhost:3000"
+    backend_cors_origins: str = "http://localhost:5173,http://localhost:3000,https://gridtwin-iota.vercel.app,https://gridtwin-backend.onrender.com,https://gridtwin-toll-free.onrender.com"
     backend_log_level: str = "INFO"
     
     # Database

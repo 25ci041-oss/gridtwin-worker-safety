@@ -780,7 +780,7 @@ export const useGridStore = create<GridState>((set, get) => ({
 
     // Also send to backend if reachable
     try {
-      fetch(`/api/switches/${switchId}/operate`, {
+      fetch(`${API_BASE}/api/switches/${switchId}/operate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ requested_state: state })

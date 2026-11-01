@@ -111,6 +111,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
+    allow_origin_regex=r"^https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -468,8 +469,10 @@ async def _process_device_availability(device_id: str, payload: dict):
             hardware_state["wifi_rssi"] = payload["wifi_rssi"]
 
         if status == "OFFLINE":
+            # Retain any explicit isolation/off state so toll-free hotline and UI stay accurate
             for tid in hardware_state["output_states"]:
-                hardware_state["output_states"][tid] = "UNKNOWN"
+                if hardware_state["output_states"][tid] not in ["OFF", "ISOLATED"]:
+                    hardware_state["output_states"][tid] = "UNKNOWN"
             hardware_state["telemetry"]["sensor_status"] = "DISCONNECTED"
 
         # Update DB if available
@@ -901,6 +904,15 @@ async def operate_simulated_switch(switch_id: str, request: SwitchOperationReque
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     
+    # Synchronize digital twin output states
+    sw_tower_map = {
+        "SW1": "T1", "SW2": "T2", "SW3": "T3", "SW4": "T4", "SW5": "T5",
+        "SW-T1": "T1", "SW-T2": "T2", "SW-T3": "T3", "SW-T4": "T4", "SW-T5": "T5"
+    }
+    if switch_id in sw_tower_map:
+        tid = sw_tower_map[switch_id]
+        hardware_state["output_states"][tid] = "ON" if request.requested_state == "CLOSED" else "OFF"
+
     # Log event
     try:
         async with async_session_factory() as session:
@@ -1321,13 +1333,43 @@ async def set_all_towers_endpoint(payload: dict):
     for t in ["T1", "T2", "T3", "T4", "T5"]:
         hardware_state["output_states"][t] = state
     
-    return await send_physical_command(PhysicalCommandRequest(
-        device_id="esp32-gridtwin-001",
-        output_id="ALL",
-        requested_state=state,
-        action=action,
-        timeout_seconds=15,
-    ))
+    # Synchronize simulation switches
+    for sw in ["SW1", "SW2", "SW3", "SW4", "SW5"]:
+        try:
+            simulator.operate_switch(sw, "CLOSED" if state == "ON" else "OPEN")
+        except Exception:
+            pass
+
+    # Broadcast to WebSockets
+    try:
+        await ws_manager.broadcast("batch_command", {
+            "action": action,
+            "state": state,
+            "output_states": hardware_state["output_states"]
+        })
+    except Exception:
+        pass
+
+    msg = f"All towers set to {state} in digital twin."
+    if mqtt_service.is_connected:
+        try:
+            res = await send_physical_command(PhysicalCommandRequest(
+                device_id="esp32-gridtwin-001",
+                output_id="ALL",
+                requested_state=state,
+                action=action,
+                timeout_seconds=15,
+            ))
+            msg = res.get("message", msg)
+        except Exception as e:
+            logger.info(f"Batch physical MQTT note: {e}")
+
+    return {
+        "status": "SUCCESS",
+        "action": action,
+        "message": msg,
+        "output_states": hardware_state["output_states"]
+    }
 
 
 @app.get("/api/v1/hardware/telemetry")
