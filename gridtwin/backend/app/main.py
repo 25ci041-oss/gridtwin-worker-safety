@@ -29,6 +29,7 @@ from app.schemas.schemas import (
     LoadCreate, LoadResponse, SimulationStartRequest, SimulationSessionResponse,
     SimulationResultResponse, DeviceRegister, DeviceResponse, DeviceEnableRequest,
     OutputMappingCreate, OutputMappingResponse, PhysicalCommandRequest,
+    HardwareCommandRequest,
     CommandResponse, CommandAcknowledgement, TelemetryIngest, TelemetryResponse,
     AlertCreate, AlertResponse, EventLogResponse, DashboardSummary,
     NetworkTopologyResponse, ConnectivityResult as ConnectivityResultSchema,
