@@ -315,6 +315,13 @@ async def restore_tower_api(tower_id: str):
     return await gridtwin_client.restore_tower(tower_id)
 
 
+@app.post("/api/towers/sync")
+async def sync_towers_api(payload: dict):
+    """Allows batch synchronization of isolated towers from 3D Twin."""
+    iso_list = payload.get("isolated_towers", [])
+    return gridtwin_client.sync_isolated_towers(iso_list)
+
+
 @app.get("/api/tts/speak")
 async def tts_speak(text: str = Query(...), lang: str = Query("en")):
     """Dynamically generate and return neural MP3 audio URL for any phrase."""

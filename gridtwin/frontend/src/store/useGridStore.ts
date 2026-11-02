@@ -549,6 +549,19 @@ export const useGridStore = create<GridState>((set, get) => ({
         ...get().eventLogs
       ]
     });
+
+    // 2-Way Simultaneous Sync to Toll-Free Hotline & Backend
+    const syncPayload = JSON.stringify({ isolated_towers: nextList });
+    fetch(`${API_BASE}/api/v1/hardware/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: syncPayload,
+    }).catch(() => {});
+    fetch(`${TOLLFREE_BASE}/api/towers/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: syncPayload,
+    }).catch(() => {});
   },
 
   turnTowerOn: (towerId: 'T1' | 'T2' | 'T3' | 'T4' | 'T5') => {
@@ -1201,7 +1214,7 @@ export const useGridStore = create<GridState>((set, get) => ({
 
         set(state => {
           const isDevOnline = dev.status === 'ONLINE' || data.status === 'ONLINE';
-          const confirmedOutputs = dev.output_states || state.hardwareDevice.output_states;
+          const confirmedOutputs = dev.output_states || data.output_states || state.hardwareDevice.output_states;
 
           return {
             isBackendConnected: true,
@@ -1236,7 +1249,26 @@ export const useGridStore = create<GridState>((set, get) => ({
   },
 
   handleWebSocketMessage: (type: string, data: any) => {
-    if (type === 'command_ack') {
+    if (type === 'tower_isolated') {
+      const tid = data.tower_id as ('T1' | 'T2' | 'T3' | 'T4' | 'T5');
+      if (tid) {
+        const cur = get().isolatedTowers || [];
+        if (!cur.includes(tid)) {
+          (get() as any)._applyIsolationState([...cur, tid]);
+        }
+      }
+    } else if (type === 'tower_restored') {
+      const tid = data.tower_id as ('T1' | 'T2' | 'T3' | 'T4' | 'T5');
+      if (tid) {
+        const cur = get().isolatedTowers || [];
+        if (cur.includes(tid)) {
+          (get() as any)._applyIsolationState(cur.filter(t => t !== tid));
+        }
+      }
+    } else if (type === 'towers_synced') {
+      const isoList = (data.isolated_towers || []) as ('T1' | 'T2' | 'T3' | 'T4' | 'T5')[];
+      (get() as any)._applyIsolationState(isoList);
+    } else if (type === 'command_ack') {
       const { output_id, success, reported_state, output_states, latency_ms, error_reason } = data;
 
       // Clear pending status for affected tower(s)

@@ -469,10 +469,10 @@ async def _process_device_availability(device_id: str, payload: dict):
             hardware_state["wifi_rssi"] = payload["wifi_rssi"]
 
         if status == "OFFLINE":
-            # Retain any explicit isolation/off state so toll-free hotline and UI stay accurate
+            # Retain explicit state so toll-free hotline and UI stay accurate
             for tid in hardware_state["output_states"]:
                 if hardware_state["output_states"][tid] not in ["OFF", "ISOLATED"]:
-                    hardware_state["output_states"][tid] = "UNKNOWN"
+                    hardware_state["output_states"][tid] = "ON"
             hardware_state["telemetry"]["sensor_status"] = "DISCONNECTED"
 
         # Update DB if available
@@ -1368,6 +1368,39 @@ async def set_all_towers_endpoint(payload: dict):
         "status": "SUCCESS",
         "action": action,
         "message": msg,
+        "output_states": hardware_state["output_states"]
+    }
+
+
+@app.post("/api/v1/hardware/sync")
+@app.post("/api/hardware/sync")
+async def sync_hardware_state_endpoint(payload: dict):
+    """
+    Synchronizes authoritative tower isolation state from 3D Twin frontend.
+    """
+    iso_list = [str(x).upper() for x in payload.get("isolated_towers", [])]
+    sw_map = {"T1": "SW1", "T2": "SW2", "T3": "SW3", "T4": "SW4", "T5": "SW5"}
+    for tid in ["T1", "T2", "T3", "T4", "T5"]:
+        is_iso = tid in iso_list
+        hardware_state["output_states"][tid] = "OFF" if is_iso else "ON"
+        if tid in sw_map:
+            try:
+                simulator.operate_switch(sw_map[tid], "OPEN" if is_iso else "CLOSED")
+            except Exception:
+                pass
+    
+    # Broadcast to all WebSockets
+    try:
+        await ws_manager.broadcast("towers_synced", {
+            "isolated_towers": iso_list,
+            "output_states": hardware_state["output_states"]
+        })
+    except Exception:
+        pass
+
+    return {
+        "status": "SUCCESS",
+        "isolated_towers": iso_list,
         "output_states": hardware_state["output_states"]
     }
 

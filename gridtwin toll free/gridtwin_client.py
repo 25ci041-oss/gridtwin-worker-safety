@@ -21,7 +21,7 @@ logger = logging.getLogger("tollfree.client")
 _FALLBACK_STATE = {
     "T1": {"is_isolated": False, "is_energized": True, "current_ma": 150.0, "voltage_v": 5.0},
     "T2": {"is_isolated": False, "is_energized": True, "current_ma": 145.0, "voltage_v": 5.0},
-    "T3": {"is_isolated": True,  "is_energized": False, "current_ma": 0.0,   "voltage_v": 0.0}, # Target isolation demo
+    "T3": {"is_isolated": False, "is_energized": True, "current_ma": 145.0, "voltage_v": 5.0},
     "T4": {"is_isolated": False, "is_energized": True, "current_ma": 148.0, "voltage_v": 5.0},
     "T5": {"is_isolated": False, "is_energized": True, "current_ma": 142.0, "voltage_v": 5.0},
 }
@@ -122,15 +122,17 @@ class GridTwinClient:
                 }
 
         # 2. Second priority: Check digital twin simulation
-        if sim and "energized_nodes" in sim:
-            energized_nodes = sim.get("energized_nodes", [])
-            de_energized_nodes = sim.get("de_energized_nodes", [])
+        if sim and ("switch_states" in sim or "energized_nodes" in sim):
             sw_states = sim.get("switch_states", {})
-            
             is_sw_open = (sw_states.get(sw_id) == "OPEN") or (sw_states.get(f"SW-T{tower_number}") == "OPEN")
             
-            is_energized = (node_id in energized_nodes) and not is_sw_open
-            is_isolated = not is_energized or (node_id in de_energized_nodes) or is_sw_open
+            # Check local authoritative state override
+            fb = _FALLBACK_STATE.get(tower_id, {})
+            fb_isolated = fb.get("is_isolated", False)
+
+            # A tower is isolated IF AND ONLY IF its own switch is open, or explicitly isolated
+            is_isolated = is_sw_open or fb_isolated
+            is_energized = not is_isolated
             
             current_ma = 145.0 if is_energized else 0.0
             voltage_v = 5.0 if is_energized else 0.0
@@ -221,6 +223,19 @@ class GridTwinClient:
         except Exception as e:
             logger.error(f"Error dispatching restore to {url}: {e}")
         return {"status": "SUCCESS", "tower_id": tid, "is_isolated": False, "source": "tollfree_local"}
+
+
+    def sync_isolated_towers(self, isolated_list: list) -> Dict[str, Any]:
+        """Update in-memory state based on authoritative isolated list from 3D Twin."""
+        iso_set = set(str(t).upper() for t in isolated_list)
+        for tid in ["T1", "T2", "T3", "T4", "T5"]:
+            is_iso = tid in iso_set
+            if tid in _FALLBACK_STATE:
+                _FALLBACK_STATE[tid]["is_isolated"] = is_iso
+                _FALLBACK_STATE[tid]["is_energized"] = not is_iso
+                _FALLBACK_STATE[tid]["current_ma"] = 0.0 if is_iso else 145.0
+                _FALLBACK_STATE[tid]["voltage_v"] = 0.0 if is_iso else 5.0
+        return {"status": "SUCCESS", "isolated_towers": list(iso_set)}
 
 
 # Global singleton instance

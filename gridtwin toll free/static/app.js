@@ -507,8 +507,10 @@ function renderTowerCards(towers) {
 // 2-Way Command Dispatch: Toll-Free UI -> Digital Twin Backend
 async function toggleTowerIsolation(towerId, currentIsIsolated) {
   const endpoint = currentIsIsolated ? `/api/towers/${towerId}/restore` : `/api/towers/${towerId}/isolate`;
+  const backendUrl = "https://gridtwin-backend.onrender.com/api/v1/hardware/" + (currentIsIsolated ? "restore" : "isolate") + "/" + towerId;
   try {
     await fetch(endpoint, { method: "POST" });
+    fetch(backendUrl, { method: "POST" }).catch(() => {});
     addTranscript("system", `[2-WAY SYNC] Tower ${towerId} ${currentIsIsolated ? "RESTORED" : "ISOLATED"} from Toll-Free UI -> Sent to Digital Twin.`);
     fetchTowersStatus();
   } catch (e) {

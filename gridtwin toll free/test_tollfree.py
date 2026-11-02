@@ -60,7 +60,8 @@ def run_tests():
     assert dtmf_res.json()["lang"] == "en"
     print("✓ Test 7: /api/simulator/dtmf (English) passed")
 
-    # 8. Test Simulator DTMF (Tower 3: Isolated report)
+    # 8. Test Simulator DTMF (Isolate Tower 3 and verify status report)
+    client.post("/api/towers/T3/isolate")
     tower_res = client.post("/api/simulator/dtmf", json={"digit": "3", "stage": "TOWER_SELECTION", "lang": "en"})
     assert tower_res.status_code == 200
     assert "ISOLATED" in tower_res.json()["display_text"]
