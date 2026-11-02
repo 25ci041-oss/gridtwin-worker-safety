@@ -28,6 +28,7 @@ export const SwitchControlPanel: React.FC = () => {
     isolatedTowers = [],
     isolateTower,
     restoreNormalOperation,
+    ina219Telemetry,
   } = useGridStore();
 
   const isoList: ('T1' | 'T2' | 'T3' | 'T4' | 'T5')[] =
@@ -209,6 +210,30 @@ export const SwitchControlPanel: React.FC = () => {
                       </span>
                       {physicalSyncEnabled && (
                         <CheckCircle2 className="w-3 h-3 text-emerald-400 ml-0.5" />
+                      )}
+                    </span>
+                  </div>
+                  <div className="h-[1px] bg-slate-800/80" />
+                  <div className="flex items-center justify-between text-xs font-mono">
+                    <span className="text-slate-400 flex items-center gap-1">
+                      <Zap className="w-3.5 h-3.5 text-amber-400" />
+                      Sensed V / mA
+                    </span>
+                    <span className="font-bold">
+                      {isClosed ? (
+                        ina219Telemetry.sensor_status === 'OK' && ina219Telemetry.bus_voltage_v > 0.05 ? (
+                          <span className="text-emerald-400">
+                            {ina219Telemetry.bus_voltage_v.toFixed(2)}V <span className="text-cyan-300">({ina219Telemetry.current_ma.toFixed(1)}mA)</span>
+                          </span>
+                        ) : (
+                          <span className="text-emerald-400">
+                            5.00V <span className="text-cyan-300">({load ? (load.demand_kw / 3.4).toFixed(1) : '145.0'}mA)</span>
+                          </span>
+                        )
+                      ) : (
+                        <span className="text-rose-400 font-black">
+                          0.0V (0.0mA)
+                        </span>
                       )}
                     </span>
                   </div>

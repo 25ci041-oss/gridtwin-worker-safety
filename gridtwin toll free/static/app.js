@@ -302,6 +302,7 @@ async function handleKeyPress(key) {
 
     if (result.tower_data) {
       fetchTowersStatus();
+      fetchCallLogs();
     }
 
   } catch (err) {
@@ -458,8 +459,8 @@ function renderTowerCards(towers) {
     const badgeClass = isIsolated ? "badge-isolated" : "badge-normal";
     const badgeText = isIsolated ? "ISOLATED" : "ACTIVE";
     
-    const currentVal = isIsolated ? "0 mA" : `${Math.round(t.current_ma)} mA`;
-    const voltageVal = isIsolated ? "0 V" : `${Math.round(t.voltage_v)} V`;
+    const currentVal = isIsolated ? "0.0 mA" : `${(Number(t.current_ma) || 0).toFixed(1)} mA`;
+    const voltageVal = isIsolated ? "0.0 V" : `${(Number(t.voltage_v) || 0).toFixed(2)} V`;
     const statusText = isIsolated ? "✖ Line Cut Off (Isolated)" : "✔ Live Transmission";
     
     const toggleBtnText = isIsolated ? "⚡ Restore" : "⚙ Isolate";
@@ -569,6 +570,90 @@ if (btnClearLog) {
   });
 }
 
+// ──────────────────────────────────────────────
+// Database Call Logs Polling & Rendering
+// ──────────────────────────────────────────────
+
+const dbCallLogsBody = document.getElementById("dbCallLogsBody");
+const btnRefreshLogs = document.getElementById("btnRefreshLogs");
+const btnClearDb = document.getElementById("btnClearDb");
+
+async function fetchCallLogs() {
+  if (!dbCallLogsBody) return;
+  try {
+    const res = await fetch("/api/call-logs");
+    if (!res.ok) return;
+    const data = await res.json();
+    renderCallLogsTable(data.logs || []);
+  } catch (err) {
+    console.debug("Failed to fetch call logs:", err);
+  }
+}
+
+function renderCallLogsTable(logs) {
+  if (!dbCallLogsBody) return;
+  if (!logs || logs.length === 0) {
+    dbCallLogsBody.innerHTML = `
+      <tr class="empty-row">
+        <td colspan="8">No toll-free calls recorded yet. Dial +1 573 859 5176 or click "Call Toll-Free" to record live calls.</td>
+      </tr>
+    `;
+    return;
+  }
+
+  let rows = "";
+  for (const log of logs) {
+    const isIso = (log.tower_status === "ISOLATED");
+    const channelClass = (log.call_type === "TWILIO_INBOUND") ? "twilio" : "simulator";
+    const channelLabel = (log.call_type === "TWILIO_INBOUND") ? "Twilio Phone" : "Web Simulator";
+    const stateBadgeClass = isIso ? "isolated" : "active";
+    const stateBadgeText = isIso ? "ISOLATED" : "ACTIVE";
+    const vStr = (Number(log.voltage_v) || 0).toFixed(2);
+    const maStr = (Number(log.current_ma) || 0).toFixed(1);
+
+    rows += `
+      <tr>
+        <td style="font-family: var(--font-mono); color: #94a3b8; font-size: 11px;">${log.timestamp}</td>
+        <td style="font-family: var(--font-mono); font-weight: 700; color: #facc15;">${log.caller_number}</td>
+        <td><span class="badge-channel ${channelClass}">${channelLabel}</span></td>
+        <td style="font-weight: 700; text-transform: uppercase;">${log.language || "en"}</td>
+        <td style="font-family: var(--font-mono); font-weight: 800; color: #38bdf8;">${log.tower_id || "-"}</td>
+        <td><span class="badge-state-mini ${stateBadgeClass}">${stateBadgeText}</span></td>
+        <td class="telemetry-cell">
+          <span class="volt">${vStr} V</span>
+          <span class="curr ${isIso ? 'isolated' : ''}">(${maStr} mA)</span>
+        </td>
+        <td><div class="spoken-cell" title="${log.spoken_response || ''}">${log.spoken_response || '-'}</div></td>
+      </tr>
+    `;
+  }
+  dbCallLogsBody.innerHTML = rows;
+}
+
+if (btnRefreshLogs) {
+  btnRefreshLogs.addEventListener("click", () => {
+    btnRefreshLogs.textContent = "⏳ Loading...";
+    fetchCallLogs().finally(() => {
+      setTimeout(() => { btnRefreshLogs.textContent = "🔄 Refresh Logs"; }, 400);
+    });
+  });
+}
+
+if (btnClearDb) {
+  btnClearDb.addEventListener("click", async () => {
+    if (confirm("Are you sure you want to clear all persistent call audit logs from SQLite database?")) {
+      try {
+        await fetch("/api/call-logs/clear", { method: "POST" });
+        fetchCallLogs();
+      } catch (e) {
+        console.error("Clear error:", e);
+      }
+    }
+  });
+}
+
 // Initial Load and Fast 1.5s Live Sync with Digital Twin
 fetchTowersStatus();
+fetchCallLogs();
 setInterval(fetchTowersStatus, 1500);
+setInterval(fetchCallLogs, 3000);

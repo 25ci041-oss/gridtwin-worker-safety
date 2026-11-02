@@ -10,10 +10,11 @@ import {
 } from 'lucide-react';
 
 export const KPIBar: React.FC = () => {
-  const { currentMetric, connectivity, hardwareDevice } = useGridStore();
+  const { currentMetric, connectivity, hardwareDevice, ina219Telemetry } = useGridStore();
 
   const servedPercent = Math.round((connectivity.served_demand_kw / connectivity.total_demand_kw) * 100);
   const activeFeedersCount = connectivity.energized_loads.length;
+  const isRealSensorActive = ina219Telemetry.sensor_status === 'OK' && ina219Telemetry.bus_voltage_v > 0.05;
 
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3.5 px-3 sm:px-6 py-2.5 sm:py-3.5 bg-[#070d1e] border-b border-slate-800/80 select-none">
@@ -46,7 +47,7 @@ export const KPIBar: React.FC = () => {
         </div>
       </div>
 
-      {/* KPI 2: Bus Voltage */}
+      {/* KPI 2: Bus Voltage & Sensed Current */}
       <div className="bg-[#0b132b]/90 border border-slate-800/90 rounded-2xl p-2.5 sm:p-3.5 flex flex-col justify-between shadow-md hover:border-blue-500/40 transition-all">
         <div className="flex items-center gap-2.5 sm:gap-3">
           <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center shrink-0">
@@ -54,16 +55,22 @@ export const KPIBar: React.FC = () => {
           </div>
           <div className="min-w-0">
             <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-slate-400 block truncate">
-              Bus Voltage
+              {isRealSensorActive ? '⚡ INA219 Sensed Voltage' : 'Bus Voltage'}
             </span>
             <div className="flex items-baseline gap-1 mt-0.5">
               <span className="text-base sm:text-xl font-black font-mono text-white tracking-tight">
-                {(currentMetric.voltage_v / 1000).toFixed(2)}
+                {isRealSensorActive
+                  ? ina219Telemetry.bus_voltage_v.toFixed(2)
+                  : (currentMetric.voltage_v / 1000).toFixed(2)}
               </span>
-              <span className="text-[10px] sm:text-xs text-slate-300 font-mono font-medium">kV</span>
+              <span className="text-[10px] sm:text-xs text-slate-300 font-mono font-medium">
+                {isRealSensorActive ? 'V' : 'kV'}
+              </span>
             </div>
-            <span className="text-[10px] sm:text-[11px] text-blue-400 font-semibold block mt-0.5">
-              Normal (±2%)
+            <span className="text-[10px] sm:text-[11px] text-blue-400 font-semibold block mt-0.5 truncate">
+              {isRealSensorActive
+                ? `INA219: ${ina219Telemetry.current_ma.toFixed(1)} mA`
+                : 'Model: 5.00V / 145.0mA'}
             </span>
           </div>
         </div>

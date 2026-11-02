@@ -30,6 +30,7 @@ import httpx
 from config import PORT, HOST, TOLL_FREE_NUMBER, TOLL_FREE_E164, LANGUAGES, TOWERS
 from gridtwin_client import gridtwin_client
 from tts_service import generate_speech_file, pregenerate_standard_prompts
+from database import log_call, get_call_logs, clear_call_logs
 from audio_messages import (
     WELCOME_PROMPTS,
     TOWER_SELECTION_PROMPTS,
@@ -218,6 +219,26 @@ async def ivr_tower_selected(
     status_text = build_tower_status_message(tower_data, lang=lang)
     menu_text = MENU_OPTIONS_PROMPTS.get(lang, MENU_OPTIONS_PROMPTS["en"])
     goodbye_text = GOODBYE_PROMPTS.get(lang, GOODBYE_PROMPTS["en"])
+
+    # Log incoming call and spoken response to SQLite Database
+    try:
+        form_data = await request.form() if request.method == "POST" else {}
+        caller_number = form_data.get("From") or form_data.get("Caller") or request.query_params.get("From") or "+1 573 859 5176 (Direct Call)"
+        call_sid = form_data.get("CallSid") or request.query_params.get("CallSid")
+        log_call(
+            caller_number=str(caller_number),
+            call_type="TWILIO_INBOUND",
+            language=lang,
+            tower_id=f"T{selected_digit}",
+            tower_status="ISOLATED" if tower_data.get("is_isolated") else "ACTIVE",
+            voltage_v=float(tower_data.get("voltage_v", 0.0)),
+            current_ma=float(tower_data.get("current_ma", 0.0)),
+            spoken_response=status_text,
+            call_sid=str(call_sid) if call_sid else None,
+            status="COMPLETED"
+        )
+    except Exception as db_err:
+        logger.error(f"Error logging inbound Twilio call to DB: {db_err}")
 
     state_prefix = "isolated" if tower_data.get("is_isolated") else "active"
     status_file = f"tower_{selected_digit}_{state_prefix}_{lang}.mp3"
@@ -416,6 +437,23 @@ async def simulator_send_dtmf(payload: dict):
         status_text = build_tower_status_message(tower_data, lang=current_lang)
         menu_text = MENU_OPTIONS_PROMPTS.get(current_lang, MENU_OPTIONS_PROMPTS["en"])
         
+        # Log simulator interaction and response to SQLite Database
+        try:
+            caller_phone = payload.get("caller_number", "Webphone Simulator (+1 573 859 5176)")
+            log_call(
+                caller_number=str(caller_phone),
+                call_type="WEB_SIMULATOR",
+                language=current_lang,
+                tower_id=f"T{digit}",
+                tower_status="ISOLATED" if tower_data.get("is_isolated") else "ACTIVE",
+                voltage_v=float(tower_data.get("voltage_v", 0.0)),
+                current_ma=float(tower_data.get("current_ma", 0.0)),
+                spoken_response=status_text,
+                status="COMPLETED"
+            )
+        except Exception as db_err:
+            logger.error(f"Error logging simulator call to DB: {db_err}")
+
         # Combine status message and menu options for fluid neural playback
         full_speech = f"{status_text} {menu_text}"
         audio_url = await generate_speech_file(full_speech, current_lang)
@@ -466,6 +504,28 @@ async def simulator_send_dtmf(payload: dict):
             }
 
     return {"error": "Unknown stage"}
+
+
+@app.get("/api/call-logs")
+async def get_call_logs_api(limit: int = Query(50, ge=1, le=200)):
+    """Retrieve persistent call usage and response records from SQLite database."""
+    logs = get_call_logs(limit=limit)
+    return {
+        "success": True,
+        "count": len(logs),
+        "database": "call_logs.db",
+        "logs": logs
+    }
+
+
+@app.post("/api/call-logs/clear")
+async def clear_call_logs_api():
+    """Clear call logs from SQLite database."""
+    clear_call_logs()
+    return {
+        "success": True,
+        "message": "Call usage logs cleared successfully"
+    }
 
 
 # ══════════════════════════════════════════════════════

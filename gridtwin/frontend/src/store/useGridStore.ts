@@ -315,12 +315,12 @@ export const useGridStore = create<GridState>((set, get) => ({
 
   metricsHistory: Array.from({ length: 20 }).map((_, i) => ({
     timestamp: new Date(Date.now() - (20 - i) * 2000).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-    voltage_v: 11000 + (Math.random() * 80 - 40),
-    current_a: 115 + (Math.random() * 8 - 4),
-    active_power_kw: 2170 + (Math.random() * 30 - 15),
-    reactive_power_kvar: 420 + (Math.random() * 10 - 5),
-    power_factor: 0.94 + (Math.random() * 0.02 - 0.01),
-    frequency_hz: 50.0 + (Math.random() * 0.08 - 0.04),
+    voltage_v: 11024,
+    current_a: 114.2,
+    active_power_kw: 2173.7,
+    reactive_power_kvar: 428.1,
+    power_factor: 0.945,
+    frequency_hz: 50.01,
   })),
 
   currentMetric: {
@@ -761,7 +761,7 @@ export const useGridStore = create<GridState>((set, get) => ({
         [sectionKey]: outputValue
       },
       last_seen_at: new Date().toISOString(),
-      roundtrip_latency_ms: Math.floor(14 + Math.random() * 8)
+      roundtrip_latency_ms: hardwareDevice.roundtrip_latency_ms || 18
     };
 
     // Calculate active power based on served loads

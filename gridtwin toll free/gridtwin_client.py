@@ -101,12 +101,20 @@ class GridTwinClient:
                 
                 # Fetch sensor telemetry if active
                 telemetry = hw.get("telemetry", {})
-                current_ma = float(telemetry.get("current_ma", 0.0)) if is_energized else 0.0
-                voltage_v = float(telemetry.get("bus_voltage_v", 5.0)) if is_energized else 0.0
-                
-                # Default nominal current if sensor reads 0 while relay is ON
-                if is_energized and current_ma <= 0.0:
-                    current_ma = 145.0
+                raw_current = float(telemetry.get("current_ma", 0.0))
+                raw_voltage = float(telemetry.get("bus_voltage_v", 0.0))
+                has_live_sensor = (telemetry.get("sensor_status") == "OK" and raw_voltage > 0.05)
+
+                if is_isolated:
+                    current_ma = 0.0
+                    voltage_v = 0.0
+                else:
+                    if has_live_sensor:
+                        current_ma = raw_current if raw_current > 0.0 else 145.0
+                        voltage_v = raw_voltage
+                    else:
+                        current_ma = 145.0
+                        voltage_v = 5.0
 
                 return {
                     "tower_number": str(tower_number),
@@ -117,6 +125,7 @@ class GridTwinClient:
                     "current_ma": round(current_ma, 1),
                     "voltage_v": round(voltage_v, 2),
                     "source": "hardware",
+                    "sensor_mode": "LIVE_INA219" if has_live_sensor else "CALIBRATED_MODEL",
                     "device_status": hw.get("status", "ONLINE"),
                     "raw_state": out_state,
                 }
@@ -191,6 +200,7 @@ class GridTwinClient:
             _FALLBACK_STATE[tid]["is_isolated"] = True
             _FALLBACK_STATE[tid]["is_energized"] = False
             _FALLBACK_STATE[tid]["current_ma"] = 0.0
+            _FALLBACK_STATE[tid]["voltage_v"] = 0.0
 
         url = f"{self.base_url}/api/v1/hardware/isolate/{tid}"
         try:
@@ -213,6 +223,7 @@ class GridTwinClient:
             _FALLBACK_STATE[tid]["is_isolated"] = False
             _FALLBACK_STATE[tid]["is_energized"] = True
             _FALLBACK_STATE[tid]["current_ma"] = 145.0
+            _FALLBACK_STATE[tid]["voltage_v"] = 5.0
 
         url = f"{self.base_url}/api/v1/hardware/restore/{tid}"
         try:
