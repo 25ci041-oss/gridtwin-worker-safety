@@ -15,15 +15,15 @@ from typing import Dict, Any
 VOICE_CONFIG = {
     "ta": {
         "language": "ta-IN",
-        "voice": "Polly.Valluvar", # Fallback default in Twilio will be Google ta-IN
+        "voice": "Google.ta-IN-Standard-A",
     },
     "en": {
         "language": "en-IN",
-        "voice": "Polly.Aditi",
+        "voice": "Google.en-IN-Standard-A",
     },
     "hi": {
         "language": "hi-IN",
-        "voice": "Polly.Aditi",
+        "voice": "Google.hi-IN-Standard-A",
     }
 }
 

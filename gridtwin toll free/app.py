@@ -17,12 +17,15 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import logging
+import logging
+import asyncio
 from typing import Optional
 from fastapi import FastAPI, Request, Response, Form, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import os
+import httpx
 
 from config import PORT, HOST, TOLL_FREE_NUMBER, TOLL_FREE_E164, LANGUAGES, TOWERS
 from gridtwin_client import gridtwin_client
@@ -61,6 +64,32 @@ app.add_middleware(
 )
 
 
+async def keep_alive_background_worker():
+    """Keeps Render web services awake so incoming calls never encounter cold-start timeouts."""
+    await asyncio.sleep(15)
+    urls = [
+        "https://gridtwin-toll-free.onrender.com/api/status",
+        "https://gridtwin-backend.onrender.com/api/v1/simulation/connectivity"
+    ]
+    logger.info("24/7 Keep-alive background ping task activated.")
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                for u in urls:
+                    try:
+                        await client.get(u)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        await asyncio.sleep(480) # Ping every 8 minutes
+
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(keep_alive_background_worker())
+
+
 def twiml_response(xml_body: str) -> Response:
     """Helper to return valid Twilio XML response."""
     full_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -87,12 +116,14 @@ async def ivr_welcome():
     
     xml = """
     <Gather numDigits="1" action="/ivr/language-selected" method="POST" timeout="8">
-        <Say language="ta-IN">கிரிட்த்வின் ஸ்மார்ட் மின் பகிர்மான சேவைக்கு நல்வரவு. தமிழுக்கு ஒன்று அழுத்தவும்.</Say>
-        <Say language="en-IN">Welcome to GridTwin Power Distribution Monitoring System. For English, press 2.</Say>
-        <Say language="hi-IN">ग्रिडट्विन विद्युत वितरण निगरानी सेवा में आपका स्वागत है। हिंदी के लिए तीन दबाएं।</Say>
+        <Play>https://gridtwin-toll-free.onrender.com/static/audio/welcome_all.mp3</Play>
+        <Say voice="Google.ta-IN-Standard-A" language="ta-IN">தமிழுக்கு ஒன்று அழுத்தவும்.</Say>
+        <Say voice="Google.en-IN-Standard-A" language="en-IN">For English, press 2.</Say>
+        <Say voice="Google.hi-IN-Standard-A" language="hi-IN">हिंदी के लिए तीन दबाएं।</Say>
     </Gather>
     <!-- Fallback if no digit pressed within timeout -->
-    <Say language="en-IN">We did not receive any input. Let us try once more.</Say>
+    <Play>https://gridtwin-toll-free.onrender.com/static/audio/welcome_timeout.mp3</Play>
+    <Say voice="Google.en-IN-Standard-A" language="en-IN">We did not receive any input. Let us try once more.</Say>
     <Redirect>/ivr/welcome</Redirect>
     """
     return twiml_response(xml)
@@ -119,7 +150,8 @@ async def ivr_language_selected(
         if not lang_data:
             # Invalid language key pressed
             xml = """
-            <Say language="en-IN">Invalid selection. Please choose 1 for Tamil, 2 for English, or 3 for Hindi.</Say>
+            <Play>https://gridtwin-toll-free.onrender.com/static/audio/welcome_all.mp3</Play>
+            <Say voice="Google.en-IN-Standard-A" language="en-IN">Invalid selection. Please choose 1 for Tamil, 2 for English, or 3 for Hindi.</Say>
             <Redirect>/ivr/welcome</Redirect>
             """
             return twiml_response(xml)
@@ -127,14 +159,18 @@ async def ivr_language_selected(
 
     prompt_text = TOWER_SELECTION_PROMPTS.get(selected_lang, TOWER_SELECTION_PROMPTS["en"])
     voice_cfg = VOICE_CONFIG.get(selected_lang, VOICE_CONFIG["en"])
+    audio_file = f"prompt_tower_{selected_lang}.mp3"
+    timeout_file = f"timeout_{selected_lang}.mp3"
 
     logger.info(f"Language selected: {selected_lang}. Prompting for tower ID.")
 
     xml = f"""
     <Gather numDigits="1" action="/ivr/tower-selected?lang={selected_lang}" method="POST" timeout="8">
-        <Say language="{voice_cfg['language']}">{prompt_text}</Say>
+        <Play>https://gridtwin-toll-free.onrender.com/static/audio/{audio_file}</Play>
+        <Say voice="{voice_cfg['voice']}" language="{voice_cfg['language']}">{prompt_text}</Say>
     </Gather>
-    <Say language="{voice_cfg['language']}">{TIMEOUT_PROMPTS.get(selected_lang, TIMEOUT_PROMPTS['en'])}</Say>
+    <Play>https://gridtwin-toll-free.onrender.com/static/audio/{timeout_file}</Play>
+    <Say voice="{voice_cfg['voice']}" language="{voice_cfg['language']}">{TIMEOUT_PROMPTS.get(selected_lang, TIMEOUT_PROMPTS['en'])}</Say>
     <Redirect>/ivr/language-selected?lang={selected_lang}</Redirect>
     """
     return twiml_response(xml)
@@ -157,8 +193,10 @@ async def ivr_tower_selected(
 
     if not selected_digit or selected_digit not in ["1", "2", "3", "4", "5"]:
         invalid_text = INVALID_TOWER_PROMPTS.get(lang, INVALID_TOWER_PROMPTS["en"])
+        invalid_file = f"invalid_tower_{lang}.mp3"
         xml = f"""
-        <Say language="{voice_cfg['language']}">{invalid_text}</Say>
+        <Play>https://gridtwin-toll-free.onrender.com/static/audio/{invalid_file}</Play>
+        <Say voice="{voice_cfg['voice']}" language="{voice_cfg['language']}">{invalid_text}</Say>
         <Redirect>/ivr/language-selected?lang={lang}</Redirect>
         """
         return twiml_response(xml)
@@ -172,23 +210,32 @@ async def ivr_tower_selected(
             "tower_number": selected_digit,
             "is_isolated": False,
             "current_passing": True,
-            "current_ma": 140.0,
+            "current_ma": 145.0,
             "voltage_v": 5.0
         }
 
     # Format multi-lingual status message
     status_text = build_tower_status_message(tower_data, lang=lang)
     menu_text = MENU_OPTIONS_PROMPTS.get(lang, MENU_OPTIONS_PROMPTS["en"])
+    goodbye_text = GOODBYE_PROMPTS.get(lang, GOODBYE_PROMPTS["en"])
+
+    state_prefix = "isolated" if tower_data.get("is_isolated") else "active"
+    status_file = f"tower_{selected_digit}_{state_prefix}_{lang}.mp3"
+    menu_file = f"menu_{lang}.mp3"
+    goodbye_file = f"goodbye_{lang}.mp3"
 
     logger.info(f"Reporting Tower {selected_digit} in {lang}: isolated={tower_data.get('is_isolated')}, current={tower_data.get('current_ma')}mA")
 
     xml = f"""
-    <Say language="{voice_cfg['language']}">{status_text}</Say>
+    <Play>https://gridtwin-toll-free.onrender.com/static/audio/{status_file}</Play>
+    <Say voice="{voice_cfg['voice']}" language="{voice_cfg['language']}">{status_text}</Say>
     <Pause length="1"/>
     <Gather numDigits="1" action="/ivr/menu-options?lang={lang}" method="POST" timeout="10">
-        <Say language="{voice_cfg['language']}">{menu_text}</Say>
+        <Play>https://gridtwin-toll-free.onrender.com/static/audio/{menu_file}</Play>
+        <Say voice="{voice_cfg['voice']}" language="{voice_cfg['language']}">{menu_text}</Say>
     </Gather>
-    <Say language="{voice_cfg['language']}">{GOODBYE_PROMPTS.get(lang, GOODBYE_PROMPTS['en'])}</Say>
+    <Play>https://gridtwin-toll-free.onrender.com/static/audio/{goodbye_file}</Play>
+    <Say voice="{voice_cfg['voice']}" language="{voice_cfg['language']}">{goodbye_text}</Say>
     <Hangup/>
     """
     return twiml_response(xml)
@@ -219,8 +266,10 @@ async def ivr_menu_options(
     else:
         # Goodbye
         goodbye_text = GOODBYE_PROMPTS.get(lang, GOODBYE_PROMPTS["en"])
+        goodbye_file = f"goodbye_{lang}.mp3"
         xml = f"""
-        <Say language="{voice_cfg['language']}">{goodbye_text}</Say>
+        <Play>https://gridtwin-toll-free.onrender.com/static/audio/{goodbye_file}</Play>
+        <Say voice="{voice_cfg['voice']}" language="{voice_cfg['language']}">{goodbye_text}</Say>
         <Hangup/>
         """
         return twiml_response(xml)

@@ -19,8 +19,10 @@ const API_BASE = (
   import.meta.env.VITE_API_BASE_URL || 
   (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')
     ? 'https://gridtwin-backend.onrender.com'
-    : '')
+    : 'https://gridtwin-backend.onrender.com')
 ).replace(/\/$/, '');
+
+const TOLLFREE_BASE = 'https://gridtwin-toll-free.onrender.com';
 
 interface GridState {
   // Topology
@@ -708,10 +710,12 @@ export const useGridStore = create<GridState>((set, get) => ({
     const currentList: ('T1' | 'T2' | 'T3' | 'T4' | 'T5')[] = get().isolatedTowers || [];
     let nextList = [...currentList];
     if (affectedSection) {
-      if (state === 'OPEN' && !nextList.includes(affectedSection)) {
-        nextList.push(affectedSection);
-      } else if (state === 'CLOSED' && nextList.includes(affectedSection)) {
-        nextList = nextList.filter(id => id !== affectedSection);
+      if (state === 'OPEN') {
+        if (!nextList.includes(affectedSection)) nextList.push(affectedSection);
+        get().sendHardwareIsolateCommand(affectedSection);
+      } else if (state === 'CLOSED') {
+        if (nextList.includes(affectedSection)) nextList = nextList.filter(id => id !== affectedSection);
+        get().sendHardwareRestoreCommand(affectedSection);
       }
     }
 
@@ -1044,6 +1048,9 @@ export const useGridStore = create<GridState>((set, get) => ({
   },
 
   sendHardwareIsolateCommand: async (towerId) => {
+    // Notify Toll-Free IVR hotline service immediately
+    fetch(`${TOLLFREE_BASE}/api/towers/${towerId}/isolate`, { method: 'POST' }).catch(() => {});
+
     set(state => ({
       pendingTowers: { ...state.pendingTowers, [towerId]: true },
       eventLogs: [
@@ -1091,6 +1098,9 @@ export const useGridStore = create<GridState>((set, get) => ({
   },
 
   sendHardwareRestoreCommand: async (towerId) => {
+    // Notify Toll-Free IVR hotline service immediately
+    fetch(`${TOLLFREE_BASE}/api/towers/${towerId}/restore`, { method: 'POST' }).catch(() => {});
+
     set(state => ({
       pendingTowers: { ...state.pendingTowers, [towerId]: true },
       eventLogs: [
