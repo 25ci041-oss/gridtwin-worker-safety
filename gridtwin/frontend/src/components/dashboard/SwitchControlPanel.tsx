@@ -27,6 +27,8 @@ export const SwitchControlPanel: React.FC = () => {
     isolatedTowerId,
     isolatedTowers = [],
     isolateTower,
+    turnAllTowersOn,
+    turnAllTowersOff,
     restoreNormalOperation,
     ina219Telemetry,
   } = useGridStore();
@@ -39,11 +41,11 @@ export const SwitchControlPanel: React.FC = () => {
   const [interlockBypass, setInterlockBypass] = useState(false);
 
   const handleEnergizeAll = () => {
-    switches.forEach(s => setSwitchState(s.switch_id, 'CLOSED'));
+    turnAllTowersOn();
   };
 
   const handleIsolateAll = () => {
-    switches.forEach(s => setSwitchState(s.switch_id, 'OPEN'));
+    turnAllTowersOff();
   };
 
   const getSectionLoad = (secId?: string) => {

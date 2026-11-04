@@ -34,7 +34,8 @@ import {
   FileText,
   ArrowLeftRight,
   Radio,
-  Circle
+  Circle,
+  Cpu
 } from 'lucide-react';
 
 // Animated Bypass Power Line Component with Green Particles
@@ -160,6 +161,7 @@ export const GridCanvas: React.FC = () => {
     turnAllTowersOn,
     turnAllTowersOff,
     restoreNormalOperation,
+    toggleHardwareLogic,
   } = useGridStore();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -898,14 +900,25 @@ export const GridCanvas: React.FC = () => {
 
         {/* Row 2: Bottom Status Strip */}
         <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800/70">
-          {/* Left Pill */}
-          <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-[11px] font-mono font-semibold">
-            <span className={`w-1.5 h-1.5 rounded-full ${isoList.length > 0 ? (isBypassClosed ? 'bg-amber-400 animate-pulse' : 'bg-rose-500 animate-pulse') : 'bg-emerald-400 animate-pulse'}`} />
-            <span className={isoList.length > 0 ? (isBypassClosed ? 'text-amber-300' : 'text-rose-300') : 'text-emerald-300'}>
-              {isoList.length > 0
-                ? (isBypassClosed ? `Bypass Active (Isolated: ${isoList.join(', ')})` : `Alert: Isolated ${isoList.join(', ')} (Unserved)`)
-                : 'Normal Grid Operation'}
-            </span>
+          {/* Left Pill & Hardware Polarity Toggle */}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-[11px] font-mono font-semibold">
+              <span className={`w-1.5 h-1.5 rounded-full ${isoList.length > 0 ? (isBypassClosed ? 'bg-amber-400 animate-pulse' : 'bg-rose-500 animate-pulse') : 'bg-emerald-400 animate-pulse'}`} />
+              <span className={isoList.length > 0 ? (isBypassClosed ? 'text-amber-300' : 'text-rose-300') : 'text-emerald-300'}>
+                {isoList.length > 0
+                  ? (isBypassClosed ? `Bypass Active (Isolated: ${isoList.join(', ')})` : `Alert: Isolated ${isoList.join(', ')} (Unserved)`)
+                  : 'Normal Grid Operation'}
+              </span>
+            </div>
+
+            <button
+              onClick={() => toggleHardwareLogic('INVERT')}
+              className="flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-900/90 border border-slate-700/80 text-[10px] font-mono font-bold text-slate-300 hover:text-cyan-300 hover:border-cyan-500/50 transition-all active:scale-95"
+              title="Click to toggle GPIO Polarity (Direct Breadboard LEDs vs Active-LOW Relays) on the physical ESP32 prototype"
+            >
+              <Cpu className="w-3 h-3 text-cyan-400" />
+              <span>Invert Hardware LED/Relay Logic</span>
+            </button>
           </div>
 
           {/* Right Tower Status Indicators */}

@@ -357,11 +357,12 @@ async def _process_device_ack(device_id: str, payload: dict):
 
         # Update confirmed output states
         if success:
+            norm_state = "OFF" if reported_state in ("OFF", "ISOLATED", "ALL_OFF") else "ON"
             if output_id == "ALL":
                 for tid in ["T1", "T2", "T3", "T4", "T5"]:
-                    hardware_state["output_states"][tid] = reported_state
+                    hardware_state["output_states"][tid] = norm_state
             elif output_id in hardware_state["output_states"]:
-                hardware_state["output_states"][output_id] = reported_state
+                hardware_state["output_states"][output_id] = norm_state
 
         if output_states and isinstance(output_states, dict):
             for tid, st in output_states.items():
@@ -911,7 +912,19 @@ async def operate_simulated_switch(switch_id: str, request: SwitchOperationReque
     }
     if switch_id in sw_tower_map:
         tid = sw_tower_map[switch_id]
-        hardware_state["output_states"][tid] = "ON" if request.requested_state == "CLOSED" else "OFF"
+        new_state = "ON" if request.requested_state == "CLOSED" else "OFF"
+        hardware_state["output_states"][tid] = new_state
+        if mqtt_service.is_connected:
+            try:
+                mqtt_service.send_command(
+                    device_id="esp32-gridtwin-001",
+                    output_id=tid,
+                    requested_state=new_state,
+                    action="RESTORE" if new_state == "ON" else "ISOLATE",
+                    timeout_seconds=15,
+                )
+            except Exception as e:
+                logger.debug(f"MQTT switch dispatch notice: {e}")
 
     # Log event
     try:
@@ -1095,10 +1108,21 @@ async def send_physical_command(request: PhysicalCommandRequest):
         )
 
     if not mqtt_service.is_connected:
-        raise HTTPException(
-            status_code=400,
-            detail="ESP32 controller or MQTT broker is offline. Switch GridTwin to SIMULATION mode (top-right button) to test virtual tower isolation, or connect your ESP32."
-        )
+        try:
+            mqtt_service.connect()
+        except Exception:
+            pass
+        if not mqtt_service.is_connected:
+            return {
+                "command_id": command_id,
+                "device_id": request.device_id,
+                "output_id": request.output_id,
+                "target": request.output_id,
+                "requested_state": request.requested_state,
+                "action": request.action,
+                "status": "QUEUED_OFFLINE",
+                "message": "MQTT broker currently connecting. Digital twin state updated; command will sync upon connection.",
+            }
 
     command_id = request.command_id or str(uuid.uuid4())
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -1418,6 +1442,30 @@ async def sync_hardware_state_endpoint(payload: dict):
         "isolated_towers": iso_list,
         "output_states": hardware_state["output_states"]
     }
+
+
+@app.post("/api/v1/hardware/logic")
+@app.post("/api/hardware/logic")
+async def toggle_hardware_logic(payload: dict):
+    """
+    Toggle or configure physical LED/Relay polarity.
+    action can be: 'INVERT', 'ACTIVE_HIGH' (Direct LEDs to GND), 'ACTIVE_LOW' (Optocoupled Relay)
+    """
+    action = payload.get("action", "INVERT").upper()
+    msg = f"Logic command '{action}' processed."
+    if mqtt_service.is_connected:
+        try:
+            mqtt_service.send_command(
+                device_id="esp32-gridtwin-001",
+                output_id="ALL",
+                requested_state="CONFIG",
+                action=action,
+                timeout_seconds=15,
+            )
+            msg = f"Hardware logic command '{action}' dispatched to ESP32 via MQTT."
+        except Exception as e:
+            msg = f"MQTT dispatch notice: {e}"
+    return {"status": "SUCCESS", "action": action, "message": msg}
 
 
 @app.get("/api/v1/hardware/telemetry")

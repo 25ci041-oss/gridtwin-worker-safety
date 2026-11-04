@@ -78,6 +78,8 @@ interface GridState {
   turnAllTowersOff: () => void;
   isolateT3WithBypass: () => void;
   restoreNormalOperation: () => void;
+  applyIsolationLocally: (nextList: ('T1' | 'T2' | 'T3' | 'T4' | 'T5')[]) => void;
+  toggleHardwareLogic: (action?: 'INVERT' | 'ACTIVE_HIGH' | 'ACTIVE_LOW') => Promise<void>;
   setSelectedElement: (element: SelectedElement | null) => void;
   setCameraPreset: (preset: 'overview' | 'substation' | 'feeder1-3' | 'feeder4-5' | 'loads' | 'top' | 'side') => void;
   setActiveTab: (tab: 'dashboard' | '3d-twin' | 'sld' | 'hardware' | 'analytics' | 'scenarios' | 'monitoring' | 'devices' | 'alerts' | 'settings' | 'overview') => void;
@@ -461,8 +463,8 @@ export const useGridStore = create<GridState>((set, get) => ({
     });
   },
 
-  // Apply Virtual Isolation List & Recompute Network Electrical State
-  _applyIsolationState: (nextList: ('T1' | 'T2' | 'T3' | 'T4' | 'T5')[]) => {
+  // Update local Zustand store and electrical state ONLY (Zero network calls, safe for WS updates)
+  applyIsolationLocally: (nextList: ('T1' | 'T2' | 'T3' | 'T4' | 'T5')[]) => {
     const swIdMap: Record<string, string> = {
       'T1': 'SW-T1',
       'T2': 'SW-T2',
@@ -549,6 +551,11 @@ export const useGridStore = create<GridState>((set, get) => ({
         ...get().eventLogs
       ]
     });
+  },
+
+  // Apply Virtual Isolation List & Sync to Network Endpoints (Called ONLY from user-initiated actions)
+  _applyIsolationState: (nextList: ('T1' | 'T2' | 'T3' | 'T4' | 'T5')[]) => {
+    get().applyIsolationLocally(nextList);
 
     // 2-Way Simultaneous Sync to Toll-Free Hotline & Backend
     const syncPayload = JSON.stringify({ isolated_towers: nextList });
@@ -565,36 +572,76 @@ export const useGridStore = create<GridState>((set, get) => ({
   },
 
   turnTowerOn: (towerId: 'T1' | 'T2' | 'T3' | 'T4' | 'T5') => {
-    // Always dispatch RESTORE to physical ESP32 hardware
+    const { isolatedTowers = [], isolatedTowerId } = get();
+    const curList = isolatedTowers.length > 0 ? isolatedTowers : (isolatedTowerId ? [isolatedTowerId] : []);
+    const nextList = curList.filter(id => id !== towerId);
+
+    // Clear pending state immediately so user action takes precedence
+    set(state => {
+      const nextPending = { ...state.pendingTowers };
+      delete nextPending[towerId];
+      return { pendingTowers: nextPending };
+    });
+
+    // 1. Immediately apply locally to guarantee zero latency & prevent reverting
+    get().applyIsolationLocally(nextList);
+
+    // 2. Dispatch dedicated RESTORE command to physical ESP32
     get().sendHardwareRestoreCommand(towerId);
-    const { isolatedTowers = [] } = get();
-    const nextList = isolatedTowers.filter(id => id !== towerId);
-    (get() as any)._applyIsolationState(nextList);
+
+    // 3. Dispatch batch sync to backend & toll-free
+    const syncPayload = JSON.stringify({ isolated_towers: nextList });
+    fetch(`${API_BASE}/api/v1/hardware/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: syncPayload,
+    }).catch(() => {});
+    fetch(`${TOLLFREE_BASE}/api/towers/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: syncPayload,
+    }).catch(() => {});
   },
 
   turnTowerOff: (towerId: 'T1' | 'T2' | 'T3' | 'T4' | 'T5') => {
-    // Always dispatch ISOLATE to physical ESP32 hardware
+    const { isolatedTowers = [], isolatedTowerId } = get();
+    const curList = isolatedTowers.length > 0 ? isolatedTowers : (isolatedTowerId ? [isolatedTowerId] : []);
+    const nextList = curList.includes(towerId) ? curList : [...curList, towerId];
+
+    // 1. Immediately apply locally to guarantee zero latency & prevent reverting
+    get().applyIsolationLocally(nextList);
+
+    // 2. Dispatch dedicated ISOLATE command to physical ESP32
     get().sendHardwareIsolateCommand(towerId);
-    const { isolatedTowers = [] } = get();
-    const nextList = isolatedTowers.includes(towerId) ? isolatedTowers : [...isolatedTowers, towerId];
-    (get() as any)._applyIsolationState(nextList);
+
+    // 3. Dispatch batch sync to backend & toll-free
+    const syncPayload = JSON.stringify({ isolated_towers: nextList });
+    fetch(`${API_BASE}/api/v1/hardware/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: syncPayload,
+    }).catch(() => {});
+    fetch(`${TOLLFREE_BASE}/api/towers/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: syncPayload,
+    }).catch(() => {});
   },
 
   turnAllTowersOn: () => {
-    // Always dispatch ALL ON to physical ESP32 hardware
     get().sendHardwareSetAllCommand('ON');
     get().restoreNormalOperation();
   },
 
   turnAllTowersOff: () => {
-    // Always dispatch ALL OFF to physical ESP32 hardware
     get().sendHardwareSetAllCommand('OFF');
     (get() as any)._applyIsolationState(['T1', 'T2', 'T3', 'T4', 'T5']);
   },
 
   isolateTower: (towerId: 'T1' | 'T2' | 'T3' | 'T4' | 'T5') => {
-    const { isolatedTowers = [] } = get();
-    const isAlreadyIsolated = isolatedTowers.includes(towerId);
+    const { isolatedTowers = [], isolatedTowerId } = get();
+    const curList = isolatedTowers.length > 0 ? isolatedTowers : (isolatedTowerId ? [isolatedTowerId] : []);
+    const isAlreadyIsolated = curList.includes(towerId);
 
     if (isAlreadyIsolated) {
       get().turnTowerOn(towerId);
@@ -605,6 +652,24 @@ export const useGridStore = create<GridState>((set, get) => ({
 
   isolateT3WithBypass: () => {
     get().isolateTower('T3');
+  },
+
+  toggleHardwareLogic: async (action: 'INVERT' | 'ACTIVE_HIGH' | 'ACTIVE_LOW' = 'INVERT') => {
+    try {
+      await fetch(`${API_BASE}/api/v1/hardware/logic`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      get().addAlert({
+        severity: 'INFO',
+        source: 'HARDWARE_CONFIG',
+        message: `Dispatched logic command '${action}' to ESP32 prototype.`,
+        is_active: true,
+      });
+    } catch (e: any) {
+      console.warn('Logic toggle failed:', e);
+    }
   },
 
   restoreNormalOperation: () => {
@@ -688,7 +753,6 @@ export const useGridStore = create<GridState>((set, get) => ({
   },
 
   setSwitchState: async (switchId: string, state: SwitchState) => {
-    const { hardwareMode } = get();
     const swSectionMap: Record<string, 'T1' | 'T2' | 'T3' | 'T4' | 'T5'> = {
       'SW-T1': 'T1',
       'SW-T2': 'T2',
@@ -698,121 +762,28 @@ export const useGridStore = create<GridState>((set, get) => ({
     };
     const affectedSection = swSectionMap[switchId];
 
-    // In PHYSICAL mode or with sync enabled, always dispatch dedicated hardware command
     if (affectedSection) {
       if (state === 'OPEN') {
-        get().sendHardwareIsolateCommand(affectedSection);
+        get().turnTowerOff(affectedSection);
       } else {
-        get().sendHardwareRestoreCommand(affectedSection);
+        get().turnTowerOn(affectedSection);
       }
-    }
-
-    const { switches, nodes, loads, hardwareDevice, physicalSyncEnabled } = get();
-    
-    // Update switch
-    const updatedSwitches = switches.map(s => {
-      if (s.switch_id === switchId) {
-        return {
-          ...s,
-          state,
-          last_operated: new Date().toLocaleTimeString(),
-          hardware_ack: physicalSyncEnabled
-        };
-      }
-      return s;
-    });
-
-    // Update multi-tower isolated list: add or remove section based on open/closed
-    const currentList: ('T1' | 'T2' | 'T3' | 'T4' | 'T5')[] = get().isolatedTowers || [];
-    let nextList = [...currentList];
-    if (affectedSection) {
-      if (state === 'OPEN') {
-        if (!nextList.includes(affectedSection)) nextList.push(affectedSection);
-        get().sendHardwareIsolateCommand(affectedSection);
-      } else if (state === 'CLOSED') {
-        if (nextList.includes(affectedSection)) nextList = nextList.filter(id => id !== affectedSection);
-        get().sendHardwareRestoreCommand(affectedSection);
-      }
-    }
-
-    const currentBypassState = get().bypassSwitchState;
-
-    // Recompute connectivity with current bypass route state and isolated towers
-    const connectivity = calculateConnectivity(updatedSwitches, currentBypassState, nextList);
-
-    // Update node energized states
-    const updatedNodes = nodes.map(n => ({
-      ...n,
-      is_energized: connectivity.energized_nodes.includes(n.node_id)
-    }));
-
-    // Update loads energized states
-    const updatedLoads = loads.map(l => ({
-      ...l,
-      is_energized: connectivity.energized_loads.includes(l.load_id)
-    }));
-
-    // Update hardware outputs
-    const swTarget = switches.find(s => s.switch_id === switchId);
-    const sectionKey = swTarget?.section_id || 'T1';
-    const outputValue = state === 'CLOSED' ? 'ON' : 'OFF';
-
-    const updatedHardware: HardwareDevice = {
-      ...hardwareDevice,
-      output_states: {
-        ...hardwareDevice.output_states,
-        [sectionKey]: outputValue
-      },
-      last_seen_at: new Date().toISOString(),
-      roundtrip_latency_ms: hardwareDevice.roundtrip_latency_ms || 18
-    };
-
-    // Calculate active power based on served loads
-    const newKw = connectivity.served_demand_kw;
-    const newMetric: SimulationMetric = {
-      timestamp: new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      voltage_v: Math.round(11000 + (2200 - newKw) * 0.05),
-      current_a: Math.round((newKw / (Math.sqrt(3) * 11 * 0.94)) * 10) / 10,
-      active_power_kw: newKw,
-      reactive_power_kvar: Math.round(newKw * 0.28 * 10) / 10,
-      power_factor: 0.945,
-      frequency_hz: 50.0 + (newKw > 1500 ? 0.01 : -0.02)
-    };
-
-    const newEvent = {
-      id: `evt-${Date.now()}`,
-      timestamp: new Date().toLocaleTimeString(),
-      event: `Switch ${swTarget?.name || switchId} changed to ${state}. ${state === 'OPEN' ? 'Section isolated.' : 'Section energized.'}`,
-      type: 'SWITCH_OP'
-    };
-
-    const newLogs = [newEvent, ...get().eventLogs.slice(0, 40)];
-    const newMetricsHistory = [...get().metricsHistory.slice(1), newMetric];
-
-    set({
-      switches: updatedSwitches,
-      isolatedTowers: nextList,
-      isolatedTowerId: nextList[0] || null,
-      isT3Isolated: nextList.includes('T3'),
-      bypassSwitchState: currentBypassState,
-      nodes: updatedNodes,
-      loads: updatedLoads,
-      connectivity,
-      hardwareDevice: updatedHardware,
-      currentMetric: newMetric,
-      metricsHistory: newMetricsHistory,
-      eventLogs: newLogs,
-    });
-
-    // Also send to backend if reachable
-    try {
+    } else {
+      // General switch without dedicated tower (e.g. bypass)
+      const { switches, nodes, loads, bypassSwitchState } = get();
+      const updatedSwitches = switches.map(s => s.switch_id === switchId ? { ...s, state, last_operated: new Date().toLocaleTimeString() } : s);
+      const connectivity = calculateConnectivity(updatedSwitches, bypassSwitchState, get().isolatedTowers);
+      set({
+        switches: updatedSwitches,
+        connectivity,
+        nodes: nodes.map(n => ({ ...n, is_energized: connectivity.energized_nodes.includes(n.node_id) })),
+        loads: loads.map(l => ({ ...l, is_energized: connectivity.energized_loads.includes(l.load_id) })),
+      });
       fetch(`${API_BASE}/api/switches/${switchId}/operate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ requested_state: state })
       }).catch(() => {});
-    } catch {
-      // Offline fallback already handled client-side
     }
   },
 
@@ -1218,7 +1189,11 @@ export const useGridStore = create<GridState>((set, get) => ({
 
         set(state => {
           const isDevOnline = dev.status === 'ONLINE' || data.status === 'ONLINE';
-          const confirmedOutputs = dev.output_states || data.output_states || state.hardwareDevice.output_states;
+          const hasPending = Object.keys(state.pendingTowers || {}).length > 0;
+          // Protect pending user commands from being clobbered by background polling
+          const confirmedOutputs = hasPending
+            ? state.hardwareDevice.output_states
+            : (dev.output_states || data.output_states || state.hardwareDevice.output_states);
 
           return {
             isBackendConnected: true,
@@ -1258,7 +1233,7 @@ export const useGridStore = create<GridState>((set, get) => ({
       if (tid) {
         const cur = get().isolatedTowers || [];
         if (!cur.includes(tid)) {
-          (get() as any)._applyIsolationState([...cur, tid]);
+          get().applyIsolationLocally([...cur, tid]);
         }
       }
     } else if (type === 'tower_restored') {
@@ -1266,12 +1241,19 @@ export const useGridStore = create<GridState>((set, get) => ({
       if (tid) {
         const cur = get().isolatedTowers || [];
         if (cur.includes(tid)) {
-          (get() as any)._applyIsolationState(cur.filter(t => t !== tid));
+          get().applyIsolationLocally(cur.filter(t => t !== tid));
         }
       }
     } else if (type === 'towers_synced') {
       const isoList = (data.isolated_towers || []) as ('T1' | 'T2' | 'T3' | 'T4' | 'T5')[];
-      (get() as any)._applyIsolationState(isoList);
+      get().applyIsolationLocally(isoList);
+    } else if (type === 'batch_command') {
+      const st = (data.state || (data.action === 'ALL_OFF' ? 'OFF' : 'ON')).toUpperCase();
+      if (st === 'OFF' || st === 'ALL_OFF') {
+        get().applyIsolationLocally(['T1', 'T2', 'T3', 'T4', 'T5']);
+      } else {
+        get().applyIsolationLocally([]);
+      }
     } else if (type === 'command_ack') {
       const { output_id, success, reported_state, output_states, latency_ms, error_reason } = data;
 
@@ -1293,47 +1275,22 @@ export const useGridStore = create<GridState>((set, get) => ({
         } else if (output_id && reported_state) {
           if (output_id === 'ALL') {
             for (const t of ['T1', 'T2', 'T3', 'T4', 'T5']) {
-              updatedOutputs[t] = reported_state;
+              updatedOutputs[t] = (reported_state === 'ISOLATED' || reported_state === 'OFF' || reported_state === 'ALL_OFF') ? 'OFF' : 'ON';
             }
           } else {
-            updatedOutputs[output_id] = reported_state === 'ISOLATED' ? 'ISOLATED' : reported_state;
+            updatedOutputs[output_id] = (reported_state === 'ISOLATED' || reported_state === 'OFF') ? 'OFF' : 'ON';
           }
         }
 
         // Determine isolated towers list from confirmed hardware state
         const confirmedIso: ('T1'|'T2'|'T3'|'T4'|'T5')[] = [];
         for (const t of (['T1', 'T2', 'T3', 'T4', 'T5'] as const)) {
-          if (updatedOutputs[t] === 'ISOLATED' || (output_id === t && reported_state === 'ISOLATED')) {
+          if (updatedOutputs[t] === 'ISOLATED' || updatedOutputs[t] === 'OFF' || (output_id === t && (reported_state === 'ISOLATED' || reported_state === 'OFF'))) {
             confirmedIso.push(t);
           }
         }
 
-        // Sync switch states based on hardware outputs
-        const swMap: Record<string, 'T1'|'T2'|'T3'|'T4'|'T5'> = {
-          'SW-T1': 'T1', 'SW-T2': 'T2', 'SW-T3': 'T3', 'SW-T4': 'T4', 'SW-T5': 'T5'
-        };
-        const updatedSwitches = get().switches.map(s => {
-          const tId = swMap[s.switch_id];
-          const outState = tId ? updatedOutputs[tId] : 'UNKNOWN';
-          const isClosed = outState === 'ON';
-          return {
-            ...s,
-            state: isClosed ? ('CLOSED' as SwitchState) : ('OPEN' as SwitchState),
-            last_operated: `Hardware Confirmed (${reported_state})`,
-            hardware_ack: true
-          };
-        });
-
-        const bypassState = confirmedIso.length > 0 ? 'CLOSED' : get().bypassSwitchState;
-        const connectivity = calculateConnectivity(updatedSwitches, bypassState, confirmedIso);
-        const updatedNodes = get().nodes.map(n => ({
-          ...n,
-          is_energized: connectivity.energized_nodes.includes(n.node_id)
-        }));
-        const updatedLoads = get().loads.map(l => ({
-          ...l,
-          is_energized: connectivity.energized_loads.includes(l.load_id)
-        }));
+        get().applyIsolationLocally(confirmedIso);
 
         set({
           hardwareDevice: {
@@ -1343,14 +1300,6 @@ export const useGridStore = create<GridState>((set, get) => ({
             roundtrip_latency_ms: latency_ms || 18,
             last_seen_at: new Date().toISOString()
           },
-          isolatedTowers: confirmedIso,
-          isolatedTowerId: confirmedIso[0] || null,
-          isT3Isolated: confirmedIso.includes('T3'),
-          bypassSwitchState: bypassState,
-          switches: updatedSwitches,
-          nodes: updatedNodes,
-          loads: updatedLoads,
-          connectivity,
           eventLogs: [
             {
               id: `evt-${Date.now()}`,
@@ -1396,6 +1345,20 @@ export const useGridStore = create<GridState>((set, get) => ({
     } else if (type === 'device_status' || type === 'hardware_status') {
       const { status, output_states, ip_address, firmware_version, last_heartbeat_at } = data;
       const devStatus = status === 'ONLINE' ? 'ONLINE' : 'OFFLINE';
+
+      // 2-Way Hardware-to-Web Sync:
+      // If hardware is online and no user command is currently in-flight, sync real physical outputs to web
+      const hasPending = Object.keys(get().pendingTowers || {}).length > 0;
+      if (!hasPending && output_states && typeof output_states === 'object' && devStatus === 'ONLINE') {
+        const isoFromHw: ('T1'|'T2'|'T3'|'T4'|'T5')[] = [];
+        for (const t of (['T1', 'T2', 'T3', 'T4', 'T5'] as const)) {
+          if (output_states[t] === 'ISOLATED' || output_states[t] === 'OFF') {
+            isoFromHw.push(t);
+          }
+        }
+        get().applyIsolationLocally(isoFromHw);
+      }
+
       set(state => ({
         hardwareDevice: {
           ...state.hardwareDevice,

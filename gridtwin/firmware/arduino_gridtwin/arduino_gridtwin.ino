@@ -50,16 +50,16 @@ const char* FIRMWARE_VER    = "2.3.0-live";
 // ══════════════════════════════════════════════════════
 // RELAY / LED LOGIC CONFIGURATION
 // ══════════════════════════════════════════════════════
-// Set this to TRUE (DEFAULT) if your prototype uses:
-//   - An Optoisolated Relay Module (Active-LOW: LOW = Relay Closed / LED ON, HIGH = Relay Open / LED OFF)
-//   - LEDs wired with Anode (+) to 3.3V/5V and Cathode (-) to ESP32 GPIO
-//
-// Set this to FALSE if your prototype uses:
-//   - Direct LEDs wired to Ground (ESP32 GPIO -> 220Ω Resistor -> LED Anode (+) -> Cathode to GND)
+// Set this to FALSE (DEFAULT for breadboard prototypes):
+//   - Direct LEDs wired to Ground: ESP32 GPIO -> 220Ω Resistor -> LED Anode (+) -> Cathode to GND (HIGH = ON, LOW = OFF)
 //   - Active-HIGH Relay Modules (HIGH = Relay Closed, LOW = Relay Open)
 //
-// Note: You can also toggle this at runtime by sending command "INVERT" or typing 'i' in Serial Monitor!
-bool RELAY_ACTIVE_LOW = true;
+// Set this to TRUE if your prototype uses:
+//   - Optoisolated Relay Module (Active-LOW: LOW = Relay Closed / LED ON, HIGH = Relay Open / LED OFF)
+//   - LEDs wired with Anode (+) to 3.3V/5V and Cathode (-) to ESP32 GPIO
+//
+// Note: You can also toggle this at runtime by sending command "INVERT", "ACTIVE_HIGH", or "ACTIVE_LOW", or typing 'i' in Serial Monitor!
+bool RELAY_ACTIVE_LOW = false;
 
 // Pin Definitions
 const int PIN_T1            = 13;
@@ -174,6 +174,8 @@ void publishAck(const char* cmdId, const char* target, const char* action, bool 
   doc["action"] = action;
   doc["status"] = success ? "SUCCESS" : "ERROR";
   doc["reported_state"] = state;
+  doc["relay_active_low"] = RELAY_ACTIVE_LOW;
+  doc["logic_mode"] = RELAY_ACTIVE_LOW ? "ACTIVE_LOW" : "ACTIVE_HIGH";
   doc["timestamp"] = millis();
 
   JsonObject states = doc.createNestedObject("output_states");
@@ -233,6 +235,8 @@ void publishStatus() {
   doc["uptime_ms"] = millis();
   doc["wifi_rssi"] = WiFi.RSSI();
   doc["sensor_connected"] = hasIna219;
+  doc["relay_active_low"] = RELAY_ACTIVE_LOW;
+  doc["logic_mode"] = RELAY_ACTIVE_LOW ? "ACTIVE_LOW" : "ACTIVE_HIGH";
 
   JsonObject states = doc.createNestedObject("output_states");
   for (int i = 0; i < 5; i++) {
@@ -275,14 +279,23 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
   reqStr.toUpperCase();
   String tgtStr = normalizeTowerTarget(String(target));
 
-  // Support runtime logic inversion via MQTT
-  if (actStr == "INVERT" || actStr == "TOGGLE_LOGIC") {
-    RELAY_ACTIVE_LOW = !RELAY_ACTIVE_LOW;
-    Serial.printf("[CONFIG] Relay logic inverted. Now RELAY_ACTIVE_LOW = %s\n", RELAY_ACTIVE_LOW ? "true" : "false");
+  // Support runtime logic configuration via MQTT
+  if (actStr == "INVERT" || actStr == "TOGGLE_LOGIC" || actStr == "ACTIVE_HIGH" || actStr == "LED_MODE" || actStr == "ACTIVE_LOW" || actStr == "RELAY_MODE") {
+    if (actStr == "ACTIVE_HIGH" || actStr == "LED_MODE") {
+      RELAY_ACTIVE_LOW = false;
+    } else if (actStr == "ACTIVE_LOW" || actStr == "RELAY_MODE") {
+      RELAY_ACTIVE_LOW = true;
+    } else {
+      RELAY_ACTIVE_LOW = !RELAY_ACTIVE_LOW;
+    }
+    Serial.printf("[CONFIG] Relay/LED logic changed. RELAY_ACTIVE_LOW = %s (%s)\n",
+      RELAY_ACTIVE_LOW ? "true" : "false",
+      RELAY_ACTIVE_LOW ? "Active-LOW Optocoupled Relay" : "Active-HIGH Direct LEDs (HIGH=ON, LOW=OFF)");
     for (int i = 0; i < 5; i++) {
       applyRelayState(i, !towers[i].isIsolated && towers[i].isEnergized);
     }
-    publishAck(cmdId, "ALL", "INVERT", true, RELAY_ACTIVE_LOW ? "ACTIVE_LOW" : "ACTIVE_HIGH");
+    publishAck(cmdId, "ALL", "CONFIG", true, RELAY_ACTIVE_LOW ? "ACTIVE_LOW" : "ACTIVE_HIGH");
+    publishStatus();
     return;
   }
 
@@ -428,15 +441,21 @@ void loop() {
       int idx = ch - '1';
       if (towers[idx].isIsolated) {
         restoreTower(idx);
+        publishAck("serial-cmd", towers[idx].id, "RESTORE", true, "ON");
       } else {
         isolateTower(idx);
+        publishAck("serial-cmd", towers[idx].id, "ISOLATE", true, "ISOLATED");
       }
+      publishStatus();
     } else if (ch == 'i' || ch == 'I') {
       RELAY_ACTIVE_LOW = !RELAY_ACTIVE_LOW;
       Serial.printf("[MANUAL] Toggled RELAY_ACTIVE_LOW = %s\n", RELAY_ACTIVE_LOW ? "TRUE (Active-LOW)" : "FALSE (Active-HIGH)");
       for (int i = 0; i < 5; i++) {
         applyRelayState(i, !towers[i].isIsolated && towers[i].isEnergized);
       }
+      publishAck("serial-cmd", "ALL", "CONFIG", true, RELAY_ACTIVE_LOW ? "ACTIVE_LOW" : "ACTIVE_HIGH");
+      publishStatus();
+    }
     } else if (ch == 't' || ch == 'T') {
       Serial.println("[TEST] Running 5-Tower Sequential Self-Test...");
       for (int i = 0; i < 5; i++) {

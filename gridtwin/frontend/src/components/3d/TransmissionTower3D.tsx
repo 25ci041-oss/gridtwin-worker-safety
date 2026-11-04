@@ -38,7 +38,7 @@ export const TransmissionTower3D: React.FC<TransmissionTower3DProps> = ({
   const isIsolated = isolatedTowers.includes(towerId as any);
 
   // Determine effective display state:
-  // Normal state is ENERGIZED (Vivid Cyan-Blue #67e8f9)
+  // Normal state is ENERGIZED (Vivid Cyan-Blue #38bdf8)
   let effectiveStatus = 'ENERGIZED';
   let statusText = '110kV TRANSMISSION';
   let statusColor = '#38bdf8';
@@ -46,22 +46,16 @@ export const TransmissionTower3D: React.FC<TransmissionTower3DProps> = ({
   let emissiveColor = '#0284c7';
 
   if (isIsolated) {
-    // Turn Yellow / Amber ONLY when isolated!
+    // Turns into Vivid Red when isolated (as requested)
     effectiveStatus = 'ISOLATED';
     statusText = 'ISOLATED (0 A)';
-    statusColor = '#f59e0b';
-    glowColor = '#f59e0b';
-    emissiveColor = '#d97706';
+    statusColor = '#ef4444';
+    glowColor = '#ef4444';
+    emissiveColor = '#b91c1c';
   } else if (!isEnergized) {
     effectiveStatus = 'OFF';
     statusText = 'DE-ENERGIZED (OFF)';
-    statusColor = '#94a3b8';
-    glowColor = '#475569';
-    emissiveColor = '#000000';
-  } else if (hardwareMode === 'PHYSICAL' && !isOnline) {
-    effectiveStatus = 'OFFLINE';
-    statusText = 'HARDWARE OFFLINE';
-    statusColor = '#94a3b8';
+    statusColor = '#64748b';
     glowColor = '#475569';
     emissiveColor = '#000000';
   }
@@ -177,18 +171,16 @@ export const TransmissionTower3D: React.FC<TransmissionTower3DProps> = ({
   const h = height * scale;
   const pylonColor =
     effectiveStatus === 'ISOLATED'
-      ? '#fbbf24' // Bright Yellow/Gold ONLY when isolated
+      ? '#ef4444' // Vivid Crimson Red when isolated
       : effectiveStatus === 'OFF'
       ? '#64748b' // Slate grey when turned off
-      : effectiveStatus === 'OFFLINE'
-      ? '#94a3b8'
-      : '#67e8f9'; // Normal Vivid Cyan/Blue
+      : '#38bdf8'; // Normal Vivid Cyan/Electric Blue
   const steelMatColor =
     effectiveStatus === 'ISOLATED'
-      ? '#b45309'
+      ? '#991b1b' // Deep Red steel frame
       : effectiveStatus === 'OFF'
       ? '#334155'
-      : '#0891b2';
+      : '#0284c7'; // Deep Blue steel frame
 
   return (
     <group position={position} rotation={rotation} onClick={handleClick}>
@@ -257,7 +249,7 @@ export const TransmissionTower3D: React.FC<TransmissionTower3DProps> = ({
                     effectiveStatus === 'ENERGIZED'
                       ? '#38bdf8'
                       : effectiveStatus === 'ISOLATED'
-                      ? '#ea580c'
+                      ? '#ef4444'
                       : effectiveStatus === 'PENDING'
                       ? '#f59e0b'
                       : '#64748b'
@@ -297,7 +289,7 @@ export const TransmissionTower3D: React.FC<TransmissionTower3DProps> = ({
                     effectiveStatus === 'ENERGIZED'
                       ? '#38bdf8'
                       : effectiveStatus === 'ISOLATED'
-                      ? '#ea580c'
+                      ? '#ef4444'
                       : effectiveStatus === 'PENDING'
                       ? '#f59e0b'
                       : '#64748b'
