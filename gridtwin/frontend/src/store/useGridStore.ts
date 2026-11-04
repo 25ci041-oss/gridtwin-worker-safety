@@ -1070,6 +1070,16 @@ export const useGridStore = create<GridState>((set, get) => ({
         message: `Isolation command dispatched: Isolating Tower ${towerId} on physical relay. Waiting for ACK...`,
         is_active: true
       });
+      setTimeout(() => {
+        set(state => {
+          if (state.pendingTowers[towerId]) {
+            const next = { ...state.pendingTowers };
+            delete next[towerId];
+            return { pendingTowers: next };
+          }
+          return state;
+        });
+      }, 5000);
     } catch (err: any) {
       set(state => {
         const next = { ...state.pendingTowers };
@@ -1119,6 +1129,16 @@ export const useGridStore = create<GridState>((set, get) => ({
         message: `Restore command dispatched: Energizing Tower ${towerId} on physical relay. Waiting for ACK...`,
         is_active: true
       });
+      setTimeout(() => {
+        set(state => {
+          if (state.pendingTowers[towerId]) {
+            const next = { ...state.pendingTowers };
+            delete next[towerId];
+            return { pendingTowers: next };
+          }
+          return state;
+        });
+      }, 5000);
     } catch (err: any) {
       set(state => {
         const next = { ...state.pendingTowers };
@@ -1345,19 +1365,6 @@ export const useGridStore = create<GridState>((set, get) => ({
     } else if (type === 'device_status' || type === 'hardware_status') {
       const { status, output_states, ip_address, firmware_version, last_heartbeat_at } = data;
       const devStatus = status === 'ONLINE' ? 'ONLINE' : 'OFFLINE';
-
-      // 2-Way Hardware-to-Web Sync:
-      // If hardware is online and no user command is currently in-flight, sync real physical outputs to web
-      const hasPending = Object.keys(get().pendingTowers || {}).length > 0;
-      if (!hasPending && output_states && typeof output_states === 'object' && devStatus === 'ONLINE') {
-        const isoFromHw: ('T1'|'T2'|'T3'|'T4'|'T5')[] = [];
-        for (const t of (['T1', 'T2', 'T3', 'T4', 'T5'] as const)) {
-          if (output_states[t] === 'ISOLATED' || output_states[t] === 'OFF') {
-            isoFromHw.push(t);
-          }
-        }
-        get().applyIsolationLocally(isoFromHw);
-      }
 
       set(state => ({
         hardwareDevice: {
