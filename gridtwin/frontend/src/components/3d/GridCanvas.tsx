@@ -877,20 +877,33 @@ export const GridCanvas: React.FC = () => {
                 return (
                   <div
                     key={tId}
-                    className="flex flex-col items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-950/80 border border-slate-800 min-w-[50px]"
+                    className="flex flex-col items-center gap-1 px-2 py-1 rounded-lg bg-slate-950/80 border border-slate-800 shrink-0"
                   >
                     <span className="text-[11px] font-mono font-black text-slate-300">{tId}</span>
-                    <button
-                      onClick={() => isolateTower(tId)}
-                      className={`px-3 py-1 rounded-full text-xs font-black font-mono tracking-wider transition-all active:scale-95 ${
-                        !isThisIsolated
-                          ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-sm shadow-emerald-500/30'
-                          : 'bg-rose-600 hover:bg-rose-500 text-white shadow-sm shadow-rose-500/30 ring-1 ring-rose-400'
-                      }`}
-                      title={isThisIsolated ? `Tower ${tId} is ISOLATED. Click to restore.` : `Tower ${tId} is ON. Click to isolate.`}
-                    >
-                      {isThisIsolated ? 'OFF' : 'ON'}
-                    </button>
+                    <div className="flex items-center gap-1 bg-slate-900/90 p-0.5 rounded-lg border border-slate-800">
+                      <button
+                        onClick={() => turnTowerOn(tId)}
+                        className={`px-2 py-0.5 rounded text-[11px] font-black font-mono tracking-wider transition-all active:scale-95 ${
+                          !isThisIsolated
+                            ? 'bg-emerald-500 text-slate-950 shadow-sm shadow-emerald-500/30'
+                            : 'bg-transparent text-slate-400 hover:text-white hover:bg-slate-800'
+                        }`}
+                        title={`Turn Tower ${tId} ON (Energize)`}
+                      >
+                        ON
+                      </button>
+                      <button
+                        onClick={() => turnTowerOff(tId)}
+                        className={`px-2 py-0.5 rounded text-[11px] font-black font-mono tracking-wider transition-all active:scale-95 ${
+                          isThisIsolated
+                            ? 'bg-rose-600 text-white shadow-sm shadow-rose-500/30 ring-1 ring-rose-400'
+                            : 'bg-transparent text-slate-400 hover:text-white hover:bg-slate-800'
+                        }`}
+                        title={`Turn Tower ${tId} OFF (Isolate)`}
+                      >
+                        OFF
+                      </button>
+                    </div>
                   </div>
                 );
               })}

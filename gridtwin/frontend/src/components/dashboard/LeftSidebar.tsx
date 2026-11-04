@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 
 export const LeftSidebar: React.FC = () => {
-  const { activeTab, setActiveTab, isMobileNavOpen, setMobileNavOpen } = useGridStore();
+  const { activeTab, setActiveTab, isMobileNavOpen, setMobileNavOpen, hardwareDevice } = useGridStore();
 
   const navItems = [
     { id: 'dashboard', label: 'Home', icon: Home, badge: null },
@@ -97,7 +97,7 @@ export const LeftSidebar: React.FC = () => {
               <span className="text-xs sm:text-sm font-black text-white tracking-wide">System Running</span>
             </div>
             <span className="text-xs text-slate-300 font-semibold block mt-1">
-              ESP32 Connected
+              {hardwareDevice.status === 'ONLINE' ? 'ESP32 Connected' : 'ESP32 Standby'}
             </span>
           </div>
           <div className="flex items-end gap-1 h-3.5">
