@@ -46,27 +46,31 @@ export const TransmissionTower3D: React.FC<TransmissionTower3DProps> = ({
   let emissiveColor = '#0284c7';
 
   if (isIsolated) {
-    // Turns into Vivid Red when isolated (as requested)
+    // Isolated: Power supply is completely stopped (0 A). All lights extinguished until user clicks ON.
     effectiveStatus = 'ISOLATED';
-    statusText = 'ISOLATED (0 A)';
+    statusText = 'ISOLATED - POWER SUPPLY STOPPED (0 A)';
     statusColor = '#ef4444';
-    glowColor = '#ef4444';
-    emissiveColor = '#b91c1c';
+    glowColor = '#475569';
+    emissiveColor = '#000000';
   } else if (!isEnergized) {
     effectiveStatus = 'OFF';
-    statusText = 'DE-ENERGIZED (OFF)';
+    statusText = 'DE-ENERGIZED - POWER SUPPLY OFF (0 A)';
     statusColor = '#64748b';
-    glowColor = '#475569';
+    glowColor = '#334155';
     emissiveColor = '#000000';
   }
 
   const beaconRef = useRef<THREE.PointLight>(null);
 
-  // Night aircraft obstruction beacon blink on top spire
+  // Tower apex light: Glows ONLY when energized. Completely dark (0 intensity) when isolated / OFF!
   useFrame(({ clock }) => {
     if (beaconRef.current) {
-      const t = clock.getElapsedTime() * (isPending ? 6 : 2);
-      beaconRef.current.intensity = (Math.sin(t * 3) > 0.3) ? 2.5 : 0.2;
+      if (effectiveStatus === 'ISOLATED' || effectiveStatus === 'OFF') {
+        beaconRef.current.intensity = 0;
+      } else {
+        const t = clock.getElapsedTime() * (isPending ? 6 : 2);
+        beaconRef.current.intensity = (Math.sin(t * 3) > 0.3) ? 2.5 : 0.4;
+      }
     }
   });
 
@@ -317,17 +321,22 @@ export const TransmissionTower3D: React.FC<TransmissionTower3DProps> = ({
           <cylinderGeometry args={[0.04 * scale, 0.1 * scale, 0.6 * scale, 8]} />
           <meshStandardMaterial color="#94a3b8" metalness={0.9} />
         </mesh>
-        {/* Flashing Red Aviation Obstruction Beacon */}
+        {/* Tower Spire Beacon: Glows only when LIVE. Completely dark when isolated / OFF */}
         <mesh position={[0, 0.6 * scale, 0]}>
           <sphereGeometry args={[0.14 * scale, 16, 16]} />
-          <meshBasicMaterial color={isPending ? '#fbbf24' : '#ef4444'} />
+          <meshStandardMaterial
+            color={effectiveStatus === 'ISOLATED' || effectiveStatus === 'OFF' ? '#334155' : isPending ? '#fbbf24' : '#38bdf8'}
+            emissive={effectiveStatus === 'ISOLATED' || effectiveStatus === 'OFF' ? '#000000' : isPending ? '#d97706' : '#0284c7'}
+            emissiveIntensity={effectiveStatus === 'ISOLATED' || effectiveStatus === 'OFF' ? 0 : 2.0}
+            roughness={effectiveStatus === 'ISOLATED' || effectiveStatus === 'OFF' ? 0.9 : 0.1}
+          />
         </mesh>
         <pointLight
           ref={beaconRef}
           position={[0, 0.6 * scale, 0]}
-          color={isPending ? '#fbbf24' : '#ef4444'}
+          color={isPending ? '#fbbf24' : '#38bdf8'}
           distance={12 * scale}
-          intensity={2}
+          intensity={effectiveStatus === 'ISOLATED' || effectiveStatus === 'OFF' ? 0 : 2}
         />
       </group>
 

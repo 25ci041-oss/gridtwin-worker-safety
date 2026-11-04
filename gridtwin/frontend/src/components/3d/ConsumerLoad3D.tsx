@@ -34,10 +34,10 @@ export const ConsumerLoad3D: React.FC<ConsumerLoad3DProps> = ({
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
     if (beaconRef.current) {
-      beaconRef.current.intensity = Math.sin(t * 4) > 0.4 ? 2.5 : 0.2;
+      beaconRef.current.intensity = isEnergized ? (Math.sin(t * 4) > 0.4 ? 2.5 : 0.2) : 0;
     }
-    if (helipadLightRef.current && isEnergized) {
-      helipadLightRef.current.intensity = 1.6 + Math.sin(t * 3) * 0.5;
+    if (helipadLightRef.current) {
+      helipadLightRef.current.intensity = isEnergized ? (1.6 + Math.sin(t * 3) * 0.5) : 0;
     }
   });
 
