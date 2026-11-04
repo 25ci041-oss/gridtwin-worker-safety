@@ -1382,12 +1382,27 @@ async def sync_hardware_state_endpoint(payload: dict):
     sw_map = {"T1": "SW1", "T2": "SW2", "T3": "SW3", "T4": "SW4", "T5": "SW5"}
     for tid in ["T1", "T2", "T3", "T4", "T5"]:
         is_iso = tid in iso_list
-        hardware_state["output_states"][tid] = "OFF" if is_iso else "ON"
+        prev_state = hardware_state["output_states"].get(tid, "ON")
+        new_state = "OFF" if is_iso else "ON"
+        hardware_state["output_states"][tid] = new_state
         if tid in sw_map:
             try:
                 simulator.operate_switch(sw_map[tid], "OPEN" if is_iso else "CLOSED")
             except Exception:
                 pass
+        
+        # Dispatch to physical hardware via MQTT whenever state changed
+        if mqtt_service.is_connected and prev_state != new_state:
+            try:
+                mqtt_service.send_command(
+                    device_id="esp32-gridtwin-001",
+                    output_id=tid,
+                    requested_state=new_state,
+                    action="ISOLATE" if is_iso else "RESTORE",
+                    timeout_seconds=15,
+                )
+            except Exception as e:
+                logger.debug(f"Sync MQTT dispatch error for {tid}: {e}")
     
     # Broadcast to all WebSockets
     try:

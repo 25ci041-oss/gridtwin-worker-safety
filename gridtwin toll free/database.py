@@ -117,3 +117,4 @@ def clear_call_logs() -> bool:
 
 # Initialize on import
 init_db()
+

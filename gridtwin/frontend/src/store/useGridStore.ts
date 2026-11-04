@@ -698,10 +698,13 @@ export const useGridStore = create<GridState>((set, get) => ({
     };
     const affectedSection = swSectionMap[switchId];
 
-    // In PHYSICAL mode: send command to ESP32 relay and await ACK
-    if (hardwareMode === 'PHYSICAL' && affectedSection) {
-      await get().sendHardwareTowerCommand(affectedSection, state === 'CLOSED' ? 'ON' : 'OFF');
-      return;
+    // In PHYSICAL mode or with sync enabled, always dispatch dedicated hardware command
+    if (affectedSection) {
+      if (state === 'OPEN') {
+        get().sendHardwareIsolateCommand(affectedSection);
+      } else {
+        get().sendHardwareRestoreCommand(affectedSection);
+      }
     }
 
     const { switches, nodes, loads, hardwareDevice, physicalSyncEnabled } = get();
@@ -1029,6 +1032,7 @@ export const useGridStore = create<GridState>((set, get) => ({
           device_id: 'esp32-gridtwin-001',
           output_id: towerId,
           requested_state: targetState,
+          action: targetState === 'OFF' ? 'ISOLATE' : 'RESTORE',
           timeout_seconds: 15
         })
       });

@@ -45,16 +45,26 @@ const char* MQTT_USER       = "";                     // Leave blank if no auth
 const char* MQTT_PASS       = "";                     // Leave blank if no auth
 
 const char* DEVICE_ID       = "esp32-gridtwin-001";
-const char* FIRMWARE_VER    = "2.1.0-hackathon";
+const char* FIRMWARE_VER    = "2.3.0-live";
 
-// Active-LOW relay logic: standard optocoupler boards turn ON with LOW
-const int RELAY_ON          = LOW;
-const int RELAY_OFF         = HIGH;
+// ══════════════════════════════════════════════════════
+// RELAY / LED LOGIC CONFIGURATION
+// ══════════════════════════════════════════════════════
+// Set this to TRUE (DEFAULT) if your prototype uses:
+//   - An Optoisolated Relay Module (Active-LOW: LOW = Relay Closed / LED ON, HIGH = Relay Open / LED OFF)
+//   - LEDs wired with Anode (+) to 3.3V/5V and Cathode (-) to ESP32 GPIO
+//
+// Set this to FALSE if your prototype uses:
+//   - Direct LEDs wired to Ground (ESP32 GPIO -> 220Ω Resistor -> LED Anode (+) -> Cathode to GND)
+//   - Active-HIGH Relay Modules (HIGH = Relay Closed, LOW = Relay Open)
+//
+// Note: You can also toggle this at runtime by sending command "INVERT" or typing 'i' in Serial Monitor!
+bool RELAY_ACTIVE_LOW = true;
 
 // Pin Definitions
 const int PIN_T1            = 13;
 const int PIN_T2            = 14;
-const int PIN_T3            = 25; // Tower 3 (Isolation)
+const int PIN_T3            = 25; // Tower 3 (Physical Isolation Target)
 const int PIN_T4            = 26;
 const int PIN_T5            = 27;
 const int PIN_RELAY6        = 32; // Reserved
@@ -99,41 +109,57 @@ String lastProcessedCommandId = "";
 // 3. HARDWARE CONTROL FUNCTIONS
 // ══════════════════════════════════════════════════════
 
+String normalizeTowerTarget(String tgt) {
+  tgt.trim();
+  tgt.toUpperCase();
+  if (tgt == "ALL" || tgt == "ALL_ON" || tgt == "ALL_OFF") return "ALL";
+  if (tgt == "1" || tgt == "T1" || tgt == "SW1" || tgt == "SW-T1" || tgt == "TOWER1" || tgt == "TOWER 1") return "T1";
+  if (tgt == "2" || tgt == "T2" || tgt == "SW2" || tgt == "SW-T2" || tgt == "TOWER2" || tgt == "TOWER 2") return "T2";
+  if (tgt == "3" || tgt == "T3" || tgt == "SW3" || tgt == "SW-T3" || tgt == "TOWER3" || tgt == "TOWER 3") return "T3";
+  if (tgt == "4" || tgt == "T4" || tgt == "SW4" || tgt == "SW-T4" || tgt == "TOWER4" || tgt == "TOWER 4") return "T4";
+  if (tgt == "5" || tgt == "T5" || tgt == "SW5" || tgt == "SW-T5" || tgt == "TOWER5" || tgt == "TOWER 5") return "T5";
+  return tgt;
+}
+
+int findTowerIndex(const char* id) {
+  String norm = normalizeTowerTarget(String(id));
+  for (int i = 0; i < 5; i++) {
+    if (strcmp(towers[i].id, norm.c_str()) == 0) return i;
+  }
+  return -1;
+}
+
 void applyRelayState(int index, bool energize) {
   towers[index].isEnergized = energize;
-  if (energize) {
-    pinMode(towers[index].pin, OUTPUT);
-    digitalWrite(towers[index].pin, LOW); // Pull to 0V ground -> Opto active -> Relay ON
+  int pin = towers[index].pin;
+
+  pinMode(pin, OUTPUT);
+
+  if (RELAY_ACTIVE_LOW) {
+    // Active-LOW Relay Board: LOW = ON (Relay energized / LED lit), HIGH = OFF (Relay de-energized / LED dark)
+    digitalWrite(pin, energize ? LOW : HIGH);
   } else {
-    // TRI-STATE HIGH-IMPEDANCE OFF FIX:
-    // A 3.3V ESP32 outputting HIGH (3.3V) against a 5V relay board still leaves 1.7V across the opto-LED,
-    // which keeps the relay ON permanently!
-    // Switching pinMode to INPUT floats the pin in high-Z mode, forcing ZERO current flow and turning OFF the relay!
-    pinMode(towers[index].pin, INPUT);
+    // Direct LEDs to GND or Active-HIGH Relay: HIGH = ON (3.3V), LOW = OFF (0V)
+    digitalWrite(pin, energize ? HIGH : LOW);
   }
-  Serial.printf("[RELAY] Tower %s (GPIO %d) -> %s\n", 
+
+  Serial.printf("[RELAY] Tower %s (GPIO %d) -> %s [Pin level: %s]\n", 
     towers[index].id, 
-    towers[index].pin, 
-    energize ? "ENERGIZED (ON)" : "DE-ENERGIZED (OFF)");
+    pin, 
+    energize ? "ENERGIZED (ON)" : "DE-ENERGIZED (OFF)",
+    (digitalRead(pin) == HIGH) ? "HIGH" : "LOW");
 }
 
 void isolateTower(int index) {
   towers[index].isIsolated = true;
-  applyRelayState(index, false); // Turn OFF physical relay
+  applyRelayState(index, false); // Turn OFF physical relay / LED
   Serial.printf("[ISOLATION] *** TOWER %s ISOLATED! Relay open, LED OFF ***\n", towers[index].id);
 }
 
 void restoreTower(int index) {
   towers[index].isIsolated = false;
-  applyRelayState(index, true); // Turn ON physical relay
+  applyRelayState(index, true); // Turn ON physical relay / LED
   Serial.printf("[RESTORE] *** TOWER %s RESTORED! Relay closed, LED ON ***\n", towers[index].id);
-}
-
-int findTowerIndex(const char* id) {
-  for (int i = 0; i < 5; i++) {
-    if (strcmp(towers[i].id, id) == 0) return i;
-  }
-  return -1;
 }
 
 // ══════════════════════════════════════════════════════
@@ -231,7 +257,12 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
   }
 
   const char* cmdId = doc["command_id"] | "cmd-live";
-  const char* target = doc["output_id"] | doc["target"] | "";
+  const char* target = "";
+  if (doc.containsKey("output_id") && !doc["output_id"].isNull()) {
+    target = doc["output_id"];
+  } else if (doc.containsKey("target") && !doc["target"].isNull()) {
+    target = doc["target"];
+  }
   const char* action = doc["action"] | "";
   const char* reqState = doc["requested_state"] | "";
 
@@ -242,11 +273,23 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
   actStr.toUpperCase();
   String reqStr = String(reqState);
   reqStr.toUpperCase();
-  String tgtStr = String(target);
-  tgtStr.toUpperCase();
+  String tgtStr = normalizeTowerTarget(String(target));
 
-  bool isTurnOff = (actStr == "ISOLATE" || actStr == "ALL_OFF" || actStr == "OFF" || reqStr == "OFF" || reqStr == "ISOLATED");
-  bool isTurnOn  = (actStr == "RESTORE" || actStr == "ALL_ON" || actStr == "ON" || reqStr == "ON");
+  // Support runtime logic inversion via MQTT
+  if (actStr == "INVERT" || actStr == "TOGGLE_LOGIC") {
+    RELAY_ACTIVE_LOW = !RELAY_ACTIVE_LOW;
+    Serial.printf("[CONFIG] Relay logic inverted. Now RELAY_ACTIVE_LOW = %s\n", RELAY_ACTIVE_LOW ? "true" : "false");
+    for (int i = 0; i < 5; i++) {
+      applyRelayState(i, !towers[i].isIsolated && towers[i].isEnergized);
+    }
+    publishAck(cmdId, "ALL", "INVERT", true, RELAY_ACTIVE_LOW ? "ACTIVE_LOW" : "ACTIVE_HIGH");
+    return;
+  }
+
+  bool isTurnOff = (actStr == "ISOLATE" || actStr == "ALL_OFF" || actStr == "OFF" || actStr == "TRIP" || actStr == "OPEN" ||
+                    reqStr == "OFF" || reqStr == "ISOLATED" || reqStr == "OPEN");
+  bool isTurnOn  = (actStr == "RESTORE" || actStr == "ALL_ON" || actStr == "ON" || actStr == "CLOSE" || actStr == "CLOSED" ||
+                    reqStr == "ON" || reqStr == "RESTORED" || reqStr == "CLOSED");
 
   // 1. ALL TOWERS BATCH COMMAND
   if (tgtStr == "ALL" || actStr == "ALL_ON" || actStr == "ALL_OFF") {
@@ -271,10 +314,10 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
   if (idx >= 0) {
     if (isTurnOff) {
       isolateTower(idx);
-      publishAck(cmdId, tgtStr.c_str(), "ISOLATE", true, "ISOLATED");
+      publishAck(cmdId, towers[idx].id, "ISOLATE", true, "ISOLATED");
     } else {
       restoreTower(idx);
-      publishAck(cmdId, tgtStr.c_str(), "RESTORE", true, "ON");
+      publishAck(cmdId, towers[idx].id, "RESTORE", true, "ON");
     }
   } else {
     publishAck(cmdId, tgtStr.c_str(), action, false, "INVALID_TOWER");
@@ -335,10 +378,11 @@ void setup() {
 
   // STARTUP: Configure relay pins and ENERGIZE all 5 towers so LEDs glow immediately!
   for (int i = 0; i < 5; i++) {
-    applyRelayState(i, true); // Active LOW relay ON
+    applyRelayState(i, true);
     towers[i].isIsolated = false;
   }
-  pinMode(PIN_RELAY6, INPUT);
+  pinMode(PIN_RELAY6, OUTPUT);
+  digitalWrite(PIN_RELAY6, RELAY_ACTIVE_LOW ? HIGH : LOW);
   Serial.println("[INIT] All 5 tower relays ENERGIZED (LEDs glowing) on startup.");
 
   // INA219 I2C Init
@@ -374,6 +418,37 @@ void loop() {
     connectMqtt();
   } else {
     mqtt.loop();
+  }
+
+  // Serial Monitor Keyboard Commands for Instant Hardware Testing:
+  // Type '1'..'5' to toggle tower, 'i' to invert logic, 't' to test cycle all
+  if (Serial.available()) {
+    char ch = Serial.read();
+    if (ch >= '1' && ch <= '5') {
+      int idx = ch - '1';
+      if (towers[idx].isIsolated) {
+        restoreTower(idx);
+      } else {
+        isolateTower(idx);
+      }
+    } else if (ch == 'i' || ch == 'I') {
+      RELAY_ACTIVE_LOW = !RELAY_ACTIVE_LOW;
+      Serial.printf("[MANUAL] Toggled RELAY_ACTIVE_LOW = %s\n", RELAY_ACTIVE_LOW ? "TRUE (Active-LOW)" : "FALSE (Active-HIGH)");
+      for (int i = 0; i < 5; i++) {
+        applyRelayState(i, !towers[i].isIsolated && towers[i].isEnergized);
+      }
+    } else if (ch == 't' || ch == 'T') {
+      Serial.println("[TEST] Running 5-Tower Sequential Self-Test...");
+      for (int i = 0; i < 5; i++) {
+        isolateTower(i);
+        delay(400);
+      }
+      for (int i = 0; i < 5; i++) {
+        restoreTower(i);
+        delay(400);
+      }
+      Serial.println("[TEST] Self-test complete.");
+    }
   }
 
   unsigned long now = millis();
