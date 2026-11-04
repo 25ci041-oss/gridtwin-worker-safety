@@ -1137,23 +1137,7 @@ async def send_physical_command(request: PhysicalCommandRequest):
         "status": "SENT"
     }
 
-    # Persist in DB if available
-    try:
-        async with async_session_factory() as session:
-            command = DeviceCommand(
-                command_id=command_id,
-                device_id=uuid.uuid4(),
-                output_id=request.output_id,
-                requested_state=OutputState(request.requested_state) if request.requested_state in ("ON", "OFF") else OutputState.UNKNOWN,
-                status=CommandStatus.SENT,
-                expires_at=utcnow(),
-            )
-            session.add(command)
-            await session.commit()
-    except Exception:
-        pass
-
-    # Send through MQTT
+    # 1. SEND THROUGH MQTT IMMEDIATELY FOR ZERO-LATENCY HARDWARE RESPONSE (<20ms)
     try:
         mqtt_service.send_command(
             device_id=request.device_id,
@@ -1167,6 +1151,25 @@ async def send_physical_command(request: PhysicalCommandRequest):
         if command_id in hardware_state["pending_commands"]:
             hardware_state["pending_commands"].pop(command_id)
         raise HTTPException(status_code=500, detail=f"MQTT send failed: {e}")
+
+    # 2. Persist in DB asynchronously in background so we never block MQTT or HTTP response
+    async def _async_persist():
+        try:
+            async with async_session_factory() as session:
+                command = DeviceCommand(
+                    command_id=command_id,
+                    device_id=uuid.uuid4(),
+                    output_id=request.output_id,
+                    requested_state=OutputState(request.requested_state) if request.requested_state in ("ON", "OFF") else OutputState.UNKNOWN,
+                    status=CommandStatus.SENT,
+                    expires_at=utcnow(),
+                )
+                session.add(command)
+                await session.commit()
+        except Exception:
+            pass
+
+    _safe_schedule(_async_persist())
 
     # Broadcast pending status
     await ws_manager.broadcast("command_sent", {

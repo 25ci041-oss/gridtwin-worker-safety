@@ -131,29 +131,25 @@ int findTowerIndex(const char* id) {
 void applyRelayState(int index, bool energize) {
   towers[index].isEnergized = energize;
   int pin = towers[index].pin;
+  pinMode(pin, OUTPUT);
 
   if (RELAY_ACTIVE_LOW) {
-    // Active-LOW Relay Board:
-    // When ON: Drive pin OUTPUT LOW (0V ground) -> Optocoupler conducts -> Relay energizes -> LED ON
-    // When OFF: Set pin INPUT (Tri-State High-Z) -> Absolutely 0mA current can flow into the optocoupler!
-    //           (This reliably cuts off 5V relay optocouplers from a 3.3V ESP32 without leakage!)
-    if (energize) {
-      pinMode(pin, OUTPUT);
-      digitalWrite(pin, LOW);
-    } else {
-      pinMode(pin, INPUT);
-      digitalWrite(pin, HIGH);
-    }
+    // Active-LOW Optocoupled Relays:
+    // When ON (Energized): Pin LOW (0V ground) -> Optocoupler conducts -> Relay energizes -> LED ON
+    // When OFF (De-energized): Pin HIGH (3.3V) -> Optocoupler de-energizes -> Relay opens -> LED OFF
+    digitalWrite(pin, energize ? LOW : HIGH);
   } else {
-    // Direct LEDs to GND (GPIO -> 220Ω -> LED Anode -> Cathode to GND):
-    pinMode(pin, OUTPUT);
+    // Active-HIGH (Direct LEDs to GND or Active-HIGH Relays):
+    // When ON: Pin HIGH (3.3V) -> LED Anode glowing -> ON
+    // When OFF: Pin LOW (0V) -> LED Cathode grounded -> OFF
     digitalWrite(pin, energize ? HIGH : LOW);
   }
 
-  Serial.printf("[RELAY] Tower %s (GPIO %d) -> %s\n", 
+  Serial.printf("[RELAY] Tower %s (GPIO %d) -> %s (Pin Level: %s)\n", 
     towers[index].id, 
     pin, 
-    energize ? "ENERGIZED (ON)" : "DE-ENERGIZED (OFF)");
+    energize ? "ENERGIZED (ON)" : "DE-ENERGIZED (OFF)",
+    energize ? (RELAY_ACTIVE_LOW ? "LOW (0V)" : "HIGH (3.3V)") : (RELAY_ACTIVE_LOW ? "HIGH (3.3V)" : "LOW (0V)"));
 }
 
 void isolateTower(int index) {
@@ -352,10 +348,12 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
       isolateTower(idx);
       publishAck(cmdId, towers[idx].id, "ISOLATE", true, "OFF");
       publishStatus();
-    } else {
+    } else if (isTurnOn) {
       restoreTower(idx);
       publishAck(cmdId, towers[idx].id, "RESTORE", true, "ON");
       publishStatus();
+    } else {
+      Serial.printf("[MQTT WARN] Unknown action '%s' / req '%s' for tower %s. State unchanged.\n", action, reqState, towers[idx].id);
     }
   } else {
     publishAck(cmdId, tgtStr.c_str(), action, false, "INVALID_TOWER");
@@ -424,6 +422,7 @@ void setup() {
 
   // INA219 I2C Init
   Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
+  Wire.setTimeOut(10); // 10ms timeout prevents I2C bus hang if sensor is disconnected
   if (ina219.begin(&Wire)) {
     hasIna219 = true;
     Serial.println("[INIT] INA219 Current & Voltage Sensor initialized OK!");
@@ -441,7 +440,7 @@ void setup() {
   // MQTT Client
   mqtt.setServer(MQTT_BROKER, MQTT_PORT);
   mqtt.setCallback(onMqttMessage);
-  mqtt.setBufferSize(512); // Buffer size for JSON messages
+  mqtt.setBufferSize(1024); // Large buffer for reliable JSON command reception
 
   // Connect
   connectWifi();
@@ -516,10 +515,8 @@ void loop() {
     }
   }
 
-  unsigned long now = millis();
-
-  // 1. Publish INA219 live telemetry every 1 second
-  if (now - lastTelemetryMs >= 1000) {
+  // 1. Publish INA219 live telemetry every 2.5 seconds (prevents broker congestion and command lag)
+  if (now - lastTelemetryMs >= 2500) {
     lastTelemetryMs = now;
     if (mqtt.connected()) {
       publishTelemetry();
@@ -534,5 +531,5 @@ void loop() {
     }
   }
 
-  delay(10);
+  delay(2);
 }

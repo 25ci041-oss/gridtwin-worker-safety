@@ -588,17 +588,11 @@ export const useGridStore = create<GridState>((set, get) => ({
     // 2. Dispatch dedicated RESTORE command to physical ESP32
     get().sendHardwareRestoreCommand(towerId);
 
-    // 3. Dispatch batch sync to backend & toll-free
-    const syncPayload = JSON.stringify({ isolated_towers: nextList });
-    fetch(`${API_BASE}/api/v1/hardware/sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: syncPayload,
-    }).catch(() => {});
+    // 3. Dispatch sync to toll-free hotline
     fetch(`${TOLLFREE_BASE}/api/towers/sync`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: syncPayload,
+      body: JSON.stringify({ isolated_towers: nextList }),
     }).catch(() => {});
   },
 
@@ -613,17 +607,11 @@ export const useGridStore = create<GridState>((set, get) => ({
     // 2. Dispatch dedicated ISOLATE command to physical ESP32
     get().sendHardwareIsolateCommand(towerId);
 
-    // 3. Dispatch batch sync to backend & toll-free
-    const syncPayload = JSON.stringify({ isolated_towers: nextList });
-    fetch(`${API_BASE}/api/v1/hardware/sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: syncPayload,
-    }).catch(() => {});
+    // 3. Dispatch sync to toll-free hotline
     fetch(`${TOLLFREE_BASE}/api/towers/sync`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: syncPayload,
+      body: JSON.stringify({ isolated_towers: nextList }),
     }).catch(() => {});
   },
 
@@ -1035,9 +1023,6 @@ export const useGridStore = create<GridState>((set, get) => ({
   },
 
   sendHardwareIsolateCommand: async (towerId) => {
-    // Notify Toll-Free IVR hotline service immediately
-    fetch(`${TOLLFREE_BASE}/api/towers/${towerId}/isolate`, { method: 'POST' }).catch(() => {});
-
     set(state => ({
       pendingTowers: { ...state.pendingTowers, [towerId]: true },
       eventLogs: [
@@ -1095,9 +1080,6 @@ export const useGridStore = create<GridState>((set, get) => ({
   },
 
   sendHardwareRestoreCommand: async (towerId) => {
-    // Notify Toll-Free IVR hotline service immediately
-    fetch(`${TOLLFREE_BASE}/api/towers/${towerId}/restore`, { method: 'POST' }).catch(() => {});
-
     set(state => ({
       pendingTowers: { ...state.pendingTowers, [towerId]: true },
       eventLogs: [
@@ -1209,10 +1191,15 @@ export const useGridStore = create<GridState>((set, get) => ({
         set(state => {
           const isDevOnline = dev.status === 'ONLINE' || data.status === 'ONLINE';
           const hasPending = Object.keys(state.pendingTowers || {}).length > 0;
-          // Protect pending user commands from being clobbered by background polling
-          const confirmedOutputs = hasPending
+          const userIsolated = state.isolatedTowers || [];
+          // Protect pending user commands and user-isolated towers from being clobbered by background polling
+          const baseOutputs = hasPending
             ? state.hardwareDevice.output_states
-            : (dev.output_states || data.output_states || state.hardwareDevice.output_states);
+            : { ...(dev.output_states || data.output_states || state.hardwareDevice.output_states) };
+          const confirmedOutputs = { ...baseOutputs };
+          for (const isoT of userIsolated) {
+            confirmedOutputs[isoT] = 'OFF';
+          }
 
           return {
             isBackendConnected: true,
@@ -1315,12 +1302,17 @@ export const useGridStore = create<GridState>((set, get) => ({
             }
           } else if (isOnReported) {
             updatedOutputs[tId] = 'ON';
-            if (currentIso.includes(tId)) {
-              get().applyIsolationLocally(currentIso.filter(t => t !== tId));
-            }
+            // CRITICAL: Preserve user isolation! A tower isolated by the user must NEVER be
+            // automatically restored by a background ACK or queued broker packet.
+            // Only user-initiated turnTowerOn or restoreNormalOperation can restore it.
           }
         } else if (output_states && typeof output_states === 'object') {
           Object.assign(updatedOutputs, output_states);
+        }
+
+        // Re-enforce isolation on updatedOutputs
+        for (const isoT of (get().isolatedTowers || [])) {
+          updatedOutputs[isoT] = 'OFF';
         }
 
         set({
@@ -1377,17 +1369,24 @@ export const useGridStore = create<GridState>((set, get) => ({
       const { status, output_states, ip_address, firmware_version, last_heartbeat_at } = data;
       const devStatus = status === 'ONLINE' ? 'ONLINE' : 'OFFLINE';
 
-      set(state => ({
-        hardwareDevice: {
-          ...state.hardwareDevice,
-          status: devStatus,
-          ip_address: ip_address || state.hardwareDevice.ip_address,
-          firmware_version: firmware_version || state.hardwareDevice.firmware_version,
-          output_states: output_states || state.hardwareDevice.output_states,
-          last_heartbeat_at: last_heartbeat_at || state.hardwareDevice.last_heartbeat_at,
-          last_seen_at: new Date().toISOString()
+      set(state => {
+        const userIso = state.isolatedTowers || [];
+        const mergedOutputs = { ...state.hardwareDevice.output_states, ...(output_states || {}) };
+        for (const isoT of userIso) {
+          mergedOutputs[isoT] = 'OFF';
         }
-      }));
+        return {
+          hardwareDevice: {
+            ...state.hardwareDevice,
+            status: devStatus,
+            ip_address: ip_address || state.hardwareDevice.ip_address,
+            firmware_version: firmware_version || state.hardwareDevice.firmware_version,
+            output_states: mergedOutputs,
+            last_heartbeat_at: last_heartbeat_at || state.hardwareDevice.last_heartbeat_at,
+            last_seen_at: new Date().toISOString()
+          }
+        };
+      });
     }
   },
 
@@ -1396,7 +1395,20 @@ export const useGridStore = create<GridState>((set, get) => ({
       set({ switches: backendData.switches });
     }
     if (backendData.device) {
-      set({ hardwareDevice: backendData.device, isBackendConnected: true });
+      set(state => {
+        const userIso = state.isolatedTowers || [];
+        const devOutputs = { ...(backendData.device.output_states || {}) };
+        for (const isoT of userIso) {
+          devOutputs[isoT] = 'OFF';
+        }
+        return {
+          hardwareDevice: {
+            ...backendData.device,
+            output_states: { ...backendData.device.output_states, ...devOutputs }
+          },
+          isBackendConnected: true
+        };
+      });
     }
     if (backendData.telemetry) {
       set({ ina219Telemetry: backendData.telemetry });
