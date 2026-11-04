@@ -3,24 +3,26 @@
  * 
  * Hardware:
  * - ESP32 DevKit Board
- * - 8-Channel Optoisolated Relay Board (Channels 1-5 for T1-T5, Ch 6 reserved)
- * - 5x Tower LEDs with 220Ω series resistors on 5V supply
- * - INA219 High-Side I2C Current & Voltage Sensor
+ * - 8-Channel Optoisolated Relay Board (Channels 1-5 for Towers T1-T5, Ch 6 reserved)
+ * - 5x Tower LEDs with 220Ω series resistors
+ * - INA219 High-Side I2C Current & Voltage Sensor (Address 0x40 on GPIO 21 SDA / 22 SCL)
  * 
- * GPIO Mapping:
- * - Tower 1: GPIO 13 -> Relay IN1
- * - Tower 2: GPIO 14 -> Relay IN2
- * - Tower 3: GPIO 25 -> Relay IN3 (Physical Isolation Target)
- * - Tower 4: GPIO 26 -> Relay IN4
- * - Tower 5: GPIO 27 -> Relay IN5
- * - Relay 6: GPIO 32 -> Relay IN6 (Reserved)
+ * Verified GPIO Mapping:
+ * - Tower 1: GPIO 13 -> Relay IN1 (Residential Feeder)
+ * - Tower 2: GPIO 14 -> Relay IN2 (Commercial Feeder)
+ * - Tower 3: GPIO 25 -> Relay IN3 (Regional Trauma Hospital / Main Isolation Feeder)
+ * - Tower 4: GPIO 26 -> Relay IN4 (Industrial Complex)
+ * - Tower 5: GPIO 27 -> Relay IN5 (Helios Solar / BESS)
+ * - Relay 6: GPIO 32 -> Relay IN6 (Reserved Master / Bypass Route)
  * - INA219 SDA: GPIO 21
  * - INA219 SCL: GPIO 22
  * 
  * Required Libraries (Install via Arduino Library Manager):
  * 1. "PubSubClient" by Nick O'Leary
- * 2. "ArduinoJson" by Benoit Blanchon (v6 or v7)
+ * 2. "ArduinoJson" by Benoit Blanchon (Supports both v6 and v7)
  * 3. "Adafruit INA219" by Adafruit
+ * 
+ * Serial Monitor Baud Rate: 115200
  */
 
 #include <WiFi.h>
@@ -33,33 +35,30 @@
 // 1. CONFIGURATION — UPDATE YOUR WI-FI & MQTT DETAILS
 // ══════════════════════════════════════════════════════
 
-const char* WIFI_SSID       = "YOUR_WIFI_SSID";       // Put your 2.4GHz Wi-Fi name
-const char* WIFI_PASSWORD   = "YOUR_WIFI_PASSWORD";   // Put your Wi-Fi password
+// 2.4 GHz Wi-Fi Credentials (Change to your phone hotspot or Wi-Fi router)
+const char* WIFI_SSID       = "YOUR_WIFI_SSID";       
+const char* WIFI_PASSWORD   = "YOUR_WIFI_PASSWORD";   
 
-// MQTT Broker:
-// Option A: If running Mosquitto locally, use your laptop's IP address (e.g. "10.114.239.182")
-// Option B: Or use free public broker "broker.hivemq.com" (port 1883)
+// MQTT Broker (Public HiveMQ broker matches GridTwin cloud backend)
 const char* MQTT_BROKER     = "broker.hivemq.com";    
 const int   MQTT_PORT       = 1883;
-const char* MQTT_USER       = "";                     // Leave blank if no auth
-const char* MQTT_PASS       = "";                     // Leave blank if no auth
+const char* MQTT_USER       = "";                     
+const char* MQTT_PASS       = "";                     
 
 const char* DEVICE_ID       = "esp32-gridtwin-001";
-const char* FIRMWARE_VER    = "2.3.0-live";
+const char* FIRMWARE_VER    = "2.3.1-sync";
 
 // ══════════════════════════════════════════════════════
-// RELAY / LED LOGIC CONFIGURATION
+// RELAY / LED POLARITY CONFIGURATION
 // ══════════════════════════════════════════════════════
-// Set this to FALSE (DEFAULT for breadboard prototypes):
-//   - Direct LEDs wired to Ground: ESP32 GPIO -> 220Ω Resistor -> LED Anode (+) -> Cathode to GND (HIGH = ON, LOW = OFF)
-//   - Active-HIGH Relay Modules (HIGH = Relay Closed, LOW = Relay Open)
+// Standard 8-Channel Optoisolated Relay Board uses Active-LOW:
+//   - LOW (0V)  = Relay Energized (NO contact closed) -> Physical LED ON
+//   - HIGH (3.3V) = Relay De-Energized (NO contact open) -> Physical LED OFF
 //
-// Set this to TRUE if your prototype uses:
-//   - Optoisolated Relay Module (Active-LOW: LOW = Relay Closed / LED ON, HIGH = Relay Open / LED OFF)
-//   - LEDs wired with Anode (+) to 3.3V/5V and Cathode (-) to ESP32 GPIO
-//
-// Note: You can also toggle this at runtime by sending command "INVERT", "ACTIVE_HIGH", or "ACTIVE_LOW", or typing 'i' in Serial Monitor!
-bool RELAY_ACTIVE_LOW = false;
+// If you are connecting direct LEDs from GPIO -> 220Ω -> LED Anode -> GND:
+//   - Set RELAY_ACTIVE_LOW = false, OR press 'i' in Serial Monitor,
+//     OR click "Invert Hardware LED/Relay Logic" on the website.
+bool RELAY_ACTIVE_LOW = true;
 
 // Pin Definitions
 const int PIN_T1            = 13;
@@ -67,7 +66,7 @@ const int PIN_T2            = 14;
 const int PIN_T3            = 25; // Tower 3 (Physical Isolation Target)
 const int PIN_T4            = 26;
 const int PIN_T5            = 27;
-const int PIN_RELAY6        = 32; // Reserved
+const int PIN_RELAY6        = 32; // Reserved Master / Bypass Relay
 const int PIN_I2C_SDA       = 21;
 const int PIN_I2C_SCL       = 22;
 
@@ -167,10 +166,16 @@ void restoreTower(int index) {
 // ══════════════════════════════════════════════════════
 
 void publishAck(const char* cmdId, const char* target, const char* action, bool success, const char* state) {
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument doc;
+#else
   StaticJsonDocument<512> doc;
+#endif
+
   doc["command_id"] = cmdId;
   doc["device_id"] = DEVICE_ID;
   doc["target"] = target;
+  doc["output_id"] = target;
   doc["action"] = action;
   doc["status"] = success ? "SUCCESS" : "ERROR";
   doc["reported_state"] = state;
@@ -178,13 +183,8 @@ void publishAck(const char* cmdId, const char* target, const char* action, bool 
   doc["logic_mode"] = RELAY_ACTIVE_LOW ? "ACTIVE_LOW" : "ACTIVE_HIGH";
   doc["timestamp"] = millis();
 
-  JsonObject states = doc.createNestedObject("output_states");
   for (int i = 0; i < 5; i++) {
-    if (towers[i].isIsolated) {
-      states[towers[i].id] = "ISOLATED";
-    } else {
-      states[towers[i].id] = towers[i].isEnergized ? "ON" : "OFF";
-    }
+    doc["output_states"][towers[i].id] = towers[i].isIsolated ? "OFF" : (towers[i].isEnergized ? "ON" : "OFF");
   }
 
   char buf[512];
@@ -194,7 +194,12 @@ void publishAck(const char* cmdId, const char* target, const char* action, bool 
 }
 
 void publishTelemetry() {
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument doc;
+#else
   StaticJsonDocument<384> doc;
+#endif
+
   doc["device_id"] = DEVICE_ID;
   doc["timestamp"] = millis();
 
@@ -227,7 +232,12 @@ void publishTelemetry() {
 }
 
 void publishStatus() {
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument doc;
+#else
   StaticJsonDocument<512> doc;
+#endif
+
   doc["device_id"] = DEVICE_ID;
   doc["status"] = "ONLINE";
   doc["firmware_version"] = FIRMWARE_VER;
@@ -238,9 +248,8 @@ void publishStatus() {
   doc["relay_active_low"] = RELAY_ACTIVE_LOW;
   doc["logic_mode"] = RELAY_ACTIVE_LOW ? "ACTIVE_LOW" : "ACTIVE_HIGH";
 
-  JsonObject states = doc.createNestedObject("output_states");
   for (int i = 0; i < 5; i++) {
-    states[towers[i].id] = towers[i].isIsolated ? "ISOLATED" : (towers[i].isEnergized ? "ON" : "OFF");
+    doc["output_states"][towers[i].id] = towers[i].isIsolated ? "OFF" : (towers[i].isEnergized ? "ON" : "OFF");
   }
 
   char buf[512];
@@ -253,7 +262,12 @@ void publishStatus() {
 // ══════════════════════════════════════════════════════
 
 void onMqttMessage(char* topic, byte* payload, unsigned int length) {
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument doc;
+#else
   StaticJsonDocument<512> doc;
+#endif
+
   DeserializationError err = deserializeJson(doc, payload, length);
   if (err) {
     Serial.printf("[MQTT ERR] Bad JSON payload: %s\n", err.c_str());
@@ -290,7 +304,7 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
     }
     Serial.printf("[CONFIG] Relay/LED logic changed. RELAY_ACTIVE_LOW = %s (%s)\n",
       RELAY_ACTIVE_LOW ? "true" : "false",
-      RELAY_ACTIVE_LOW ? "Active-LOW Optocoupled Relay" : "Active-HIGH Direct LEDs (HIGH=ON, LOW=OFF)");
+      RELAY_ACTIVE_LOW ? "Active-LOW Optocoupled Relay (LOW=ON, HIGH=OFF)" : "Active-HIGH Direct LEDs (HIGH=ON, LOW=OFF)");
     for (int i = 0; i < 5; i++) {
       applyRelayState(i, !towers[i].isIsolated && towers[i].isEnergized);
     }
@@ -311,26 +325,30 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
       for (int i = 0; i < 5; i++) {
         isolateTower(i);
       }
-      publishAck(cmdId, "ALL", "ALL_OFF", true, "ISOLATED");
+      publishAck(cmdId, "ALL", "ALL_OFF", true, "OFF");
+      publishStatus();
     } else {
       Serial.println("[COMMAND] Energizing (NORMALIZING) ALL 5 towers...");
       for (int i = 0; i < 5; i++) {
         restoreTower(i);
       }
       publishAck(cmdId, "ALL", "ALL_ON", true, "ON");
+      publishStatus();
     }
     return;
   }
 
-  // 2. INDIVIDUAL TOWER COMMAND
+  // 2. INDIVIDUAL TOWER COMMAND (T1 to T5)
   int idx = findTowerIndex(tgtStr.c_str());
   if (idx >= 0) {
     if (isTurnOff) {
       isolateTower(idx);
-      publishAck(cmdId, towers[idx].id, "ISOLATE", true, "ISOLATED");
+      publishAck(cmdId, towers[idx].id, "ISOLATE", true, "OFF");
+      publishStatus();
     } else {
       restoreTower(idx);
       publishAck(cmdId, towers[idx].id, "RESTORE", true, "ON");
+      publishStatus();
     }
   } else {
     publishAck(cmdId, tgtStr.c_str(), action, false, "INVALID_TOWER");
@@ -391,11 +409,12 @@ void setup() {
 
   // STARTUP: Configure relay pins and ENERGIZE all 5 towers so LEDs glow immediately!
   for (int i = 0; i < 5; i++) {
+    pinMode(towers[i].pin, OUTPUT);
     applyRelayState(i, true);
     towers[i].isIsolated = false;
   }
   pinMode(PIN_RELAY6, OUTPUT);
-  digitalWrite(PIN_RELAY6, RELAY_ACTIVE_LOW ? HIGH : LOW);
+  digitalWrite(PIN_RELAY6, RELAY_ACTIVE_LOW ? LOW : HIGH);
   Serial.println("[INIT] All 5 tower relays ENERGIZED (LEDs glowing) on startup.");
 
   // INA219 I2C Init
@@ -434,7 +453,7 @@ void loop() {
   }
 
   // Serial Monitor Keyboard Commands for Instant Hardware Testing:
-  // Type '1'..'5' to toggle tower, 'i' to invert logic, 't' to test cycle all
+  // Type '1'..'5' to toggle tower, '0' for ALL OFF, '9' for ALL ON, 'i' to invert logic, 't' to test cycle all
   if (Serial.available()) {
     char ch = Serial.read();
     if (ch >= '1' && ch <= '5') {
@@ -444,8 +463,22 @@ void loop() {
         publishAck("serial-cmd", towers[idx].id, "RESTORE", true, "ON");
       } else {
         isolateTower(idx);
-        publishAck("serial-cmd", towers[idx].id, "ISOLATE", true, "ISOLATED");
+        publishAck("serial-cmd", towers[idx].id, "ISOLATE", true, "OFF");
       }
+      publishStatus();
+    } else if (ch == '0') {
+      Serial.println("[MANUAL] De-energizing ALL 5 towers...");
+      for (int i = 0; i < 5; i++) {
+        isolateTower(i);
+      }
+      publishAck("serial-cmd", "ALL", "ALL_OFF", true, "OFF");
+      publishStatus();
+    } else if (ch == '9') {
+      Serial.println("[MANUAL] Energizing ALL 5 towers...");
+      for (int i = 0; i < 5; i++) {
+        restoreTower(i);
+      }
+      publishAck("serial-cmd", "ALL", "ALL_ON", true, "ON");
       publishStatus();
     } else if (ch == 'i' || ch == 'I') {
       RELAY_ACTIVE_LOW = !RELAY_ACTIVE_LOW;
@@ -455,7 +488,6 @@ void loop() {
       }
       publishAck("serial-cmd", "ALL", "CONFIG", true, RELAY_ACTIVE_LOW ? "ACTIVE_LOW" : "ACTIVE_HIGH");
       publishStatus();
-    }
     } else if (ch == 't' || ch == 'T') {
       Serial.println("[TEST] Running 5-Tower Sequential Self-Test...");
       for (int i = 0; i < 5; i++) {
