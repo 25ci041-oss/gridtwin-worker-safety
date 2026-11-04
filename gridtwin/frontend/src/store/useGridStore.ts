@@ -299,7 +299,6 @@ export const useGridStore = create<GridState>((set, get) => ({
       'T3': 25,
       'T4': 26,
       'T5': 27,
-      'RELAY_6': 32
     }
   },
   hardwareMode: 'PHYSICAL',
@@ -1290,27 +1289,39 @@ export const useGridStore = create<GridState>((set, get) => ({
 
       if (success) {
         const updatedOutputs = { ...get().hardwareDevice.output_states };
-        if (output_states && typeof output_states === 'object') {
-          Object.assign(updatedOutputs, output_states);
-        } else if (output_id && reported_state) {
-          if (output_id === 'ALL') {
-            for (const t of ['T1', 'T2', 'T3', 'T4', 'T5']) {
-              updatedOutputs[t] = (reported_state === 'ISOLATED' || reported_state === 'OFF' || reported_state === 'ALL_OFF') ? 'OFF' : 'ON';
+        const normRep = (reported_state || '').toUpperCase();
+        const isOffReported = (normRep === 'OFF' || normRep === 'ISOLATED' || normRep === 'ALL_OFF');
+        const isOnReported = (normRep === 'ON' || normRep === 'RESTORED' || normRep === 'ALL_ON');
+
+        if (output_id === 'ALL') {
+          if (isOffReported) {
+            for (const t of (['T1', 'T2', 'T3', 'T4', 'T5'] as const)) {
+              updatedOutputs[t] = 'OFF';
             }
-          } else {
-            updatedOutputs[output_id] = (reported_state === 'ISOLATED' || reported_state === 'OFF') ? 'OFF' : 'ON';
+            get().applyIsolationLocally(['T1', 'T2', 'T3', 'T4', 'T5']);
+          } else if (isOnReported) {
+            for (const t of (['T1', 'T2', 'T3', 'T4', 'T5'] as const)) {
+              updatedOutputs[t] = 'ON';
+            }
+            get().applyIsolationLocally([]);
           }
-        }
-
-        // Determine isolated towers list from confirmed hardware state
-        const confirmedIso: ('T1'|'T2'|'T3'|'T4'|'T5')[] = [];
-        for (const t of (['T1', 'T2', 'T3', 'T4', 'T5'] as const)) {
-          if (updatedOutputs[t] === 'ISOLATED' || updatedOutputs[t] === 'OFF' || (output_id === t && (reported_state === 'ISOLATED' || reported_state === 'OFF'))) {
-            confirmedIso.push(t);
+        } else if (output_id && (['T1', 'T2', 'T3', 'T4', 'T5'] as const).includes(output_id as any)) {
+          const tId = output_id as ('T1' | 'T2' | 'T3' | 'T4' | 'T5');
+          const currentIso = get().isolatedTowers || [];
+          if (isOffReported) {
+            updatedOutputs[tId] = 'OFF';
+            if (!currentIso.includes(tId)) {
+              get().applyIsolationLocally([...currentIso, tId]);
+            }
+          } else if (isOnReported) {
+            updatedOutputs[tId] = 'ON';
+            if (currentIso.includes(tId)) {
+              get().applyIsolationLocally(currentIso.filter(t => t !== tId));
+            }
           }
+        } else if (output_states && typeof output_states === 'object') {
+          Object.assign(updatedOutputs, output_states);
         }
-
-        get().applyIsolationLocally(confirmedIso);
 
         set({
           hardwareDevice: {

@@ -290,7 +290,6 @@ hardware_state = {
         "T3": 25,
         "T4": 26,
         "T5": 27,
-        "RELAY_6": 32,
     },
     "telemetry": {
         "bus_voltage_v": 0.0,
@@ -1101,6 +1100,9 @@ async def send_physical_command(request: PhysicalCommandRequest):
     Mode B: Physical low-voltage indicator control.
     Sends a command to the ESP32 via MQTT.
     """
+    command_id = request.command_id or str(uuid.uuid4())
+    now_iso = datetime.now(timezone.utc).isoformat()
+
     if not settings.physical_control_enabled and not hardware_state["physical_control_enabled"]:
         raise HTTPException(
             status_code=403,
@@ -1123,9 +1125,6 @@ async def send_physical_command(request: PhysicalCommandRequest):
                 "status": "QUEUED_OFFLINE",
                 "message": "MQTT broker currently connecting. Digital twin state updated; command will sync upon connection.",
             }
-
-    command_id = request.command_id or str(uuid.uuid4())
-    now_iso = datetime.now(timezone.utc).isoformat()
 
     # Track in memory
     hardware_state["pending_commands"][command_id] = {

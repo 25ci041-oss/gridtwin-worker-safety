@@ -13,7 +13,6 @@
  * - Tower 3: GPIO 25 -> Relay IN3 (Regional Trauma Hospital / Main Isolation Feeder)
  * - Tower 4: GPIO 26 -> Relay IN4 (Industrial Complex)
  * - Tower 5: GPIO 27 -> Relay IN5 (Helios Solar / BESS)
- * - Relay 6: GPIO 32 -> Relay IN6 (Reserved Master / Bypass Route)
  * - INA219 SDA: GPIO 21
  * - INA219 SCL: GPIO 22
  * 
@@ -46,27 +45,26 @@ const char* MQTT_USER       = "";
 const char* MQTT_PASS       = "";                     
 
 const char* DEVICE_ID       = "esp32-gridtwin-001";
-const char* FIRMWARE_VER    = "2.3.1-sync";
+const char* FIRMWARE_VER    = "2.4.0-5tower-sync";
 
 // ══════════════════════════════════════════════════════
 // RELAY / LED POLARITY CONFIGURATION
 // ══════════════════════════════════════════════════════
 // Standard 8-Channel Optoisolated Relay Board uses Active-LOW:
-//   - LOW (0V)  = Relay Energized (NO contact closed) -> Physical LED ON
-//   - HIGH (3.3V) = Relay De-Energized (NO contact open) -> Physical LED OFF
+//   - ON:  pinMode OUTPUT, LOW (0V) -> Optocoupler conducts -> Relay ON -> Physical LED ON
+//   - OFF: pinMode INPUT (High-Z)   -> Floats pin -> Zero current -> Relay OFF -> Physical LED OFF
 //
 // If you are connecting direct LEDs from GPIO -> 220Ω -> LED Anode -> GND:
 //   - Set RELAY_ACTIVE_LOW = false, OR press 'i' in Serial Monitor,
 //     OR click "Invert Hardware LED/Relay Logic" on the website.
 bool RELAY_ACTIVE_LOW = true;
 
-// Pin Definitions
+// 5 Tower Pin Definitions (Dedicated Channels 1 to 5)
 const int PIN_T1            = 13;
 const int PIN_T2            = 14;
 const int PIN_T3            = 25; // Tower 3 (Physical Isolation Target)
 const int PIN_T4            = 26;
 const int PIN_T5            = 27;
-const int PIN_RELAY6        = 32; // Reserved Master / Bypass Relay
 const int PIN_I2C_SDA       = 21;
 const int PIN_I2C_SCL       = 22;
 
@@ -132,21 +130,28 @@ void applyRelayState(int index, bool energize) {
   towers[index].isEnergized = energize;
   int pin = towers[index].pin;
 
-  pinMode(pin, OUTPUT);
-
   if (RELAY_ACTIVE_LOW) {
-    // Active-LOW Relay Board: LOW = ON (Relay energized / LED lit), HIGH = OFF (Relay de-energized / LED dark)
-    digitalWrite(pin, energize ? LOW : HIGH);
+    // Active-LOW Relay Board:
+    // When ON: Drive pin OUTPUT LOW (0V ground) -> Optocoupler conducts -> Relay energizes -> LED ON
+    // When OFF: Set pin INPUT (Tri-State High-Z) -> Absolutely 0mA current can flow into the optocoupler!
+    //           (This reliably cuts off 5V relay optocouplers from a 3.3V ESP32 without leakage!)
+    if (energize) {
+      pinMode(pin, OUTPUT);
+      digitalWrite(pin, LOW);
+    } else {
+      pinMode(pin, INPUT);
+      digitalWrite(pin, HIGH);
+    }
   } else {
-    // Direct LEDs to GND or Active-HIGH Relay: HIGH = ON (3.3V), LOW = OFF (0V)
+    // Direct LEDs to GND (GPIO -> 220Ω -> LED Anode -> Cathode to GND):
+    pinMode(pin, OUTPUT);
     digitalWrite(pin, energize ? HIGH : LOW);
   }
 
-  Serial.printf("[RELAY] Tower %s (GPIO %d) -> %s [Pin level: %s]\n", 
+  Serial.printf("[RELAY] Tower %s (GPIO %d) -> %s\n", 
     towers[index].id, 
     pin, 
-    energize ? "ENERGIZED (ON)" : "DE-ENERGIZED (OFF)",
-    (digitalRead(pin) == HIGH) ? "HIGH" : "LOW");
+    energize ? "ENERGIZED (ON)" : "DE-ENERGIZED (OFF)");
 }
 
 void isolateTower(int index) {
@@ -409,12 +414,9 @@ void setup() {
 
   // STARTUP: Configure relay pins and ENERGIZE all 5 towers so LEDs glow immediately!
   for (int i = 0; i < 5; i++) {
-    pinMode(towers[i].pin, OUTPUT);
     applyRelayState(i, true);
     towers[i].isIsolated = false;
   }
-  pinMode(PIN_RELAY6, OUTPUT);
-  digitalWrite(PIN_RELAY6, RELAY_ACTIVE_LOW ? LOW : HIGH);
   Serial.println("[INIT] All 5 tower relays ENERGIZED (LEDs glowing) on startup.");
 
   // INA219 I2C Init
