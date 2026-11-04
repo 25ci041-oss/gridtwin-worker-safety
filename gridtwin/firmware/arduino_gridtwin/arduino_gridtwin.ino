@@ -100,6 +100,8 @@ String topicStatus;
 
 unsigned long lastTelemetryMs = 0;
 unsigned long lastHeartbeatMs = 0;
+unsigned long lastWifiRetryMs = 0;
+unsigned long lastMqttRetryMs = 0;
 String lastProcessedCommandId = "";
 
 // ══════════════════════════════════════════════════════
@@ -365,20 +367,21 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
 // ══════════════════════════════════════════════════════
 
 void connectWifi() {
+  if (WiFi.status() == WL_CONNECTED) return;
   Serial.printf("[WIFI] Connecting to '%s'...\n", WIFI_SSID);
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   int tries = 0;
   while (WiFi.status() != WL_CONNECTED && tries < 20) {
-    delay(500);
+    delay(250);
     Serial.print(".");
     tries++;
   }
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n[WIFI] Connected!");
-    Serial.printf("[WIFI] IP Address: %s\n", WiFi.localIP().toString().c_str());
+    Serial.println("\n[WIFI] Connected successfully!");
+    Serial.printf("[WIFI] IP Address: %s | Signal (RSSI): %d dBm\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
   } else {
-    Serial.println("\n[WIFI] Could not connect. Will retry in loop.");
+    Serial.println("\n[WIFI] Wi-Fi connection pending. Check Hotspot/SSID and signal strength. Retrying in background...");
   }
 }
 
@@ -446,10 +449,19 @@ void setup() {
 }
 
 void loop() {
+  unsigned long now = millis();
+
+  // Robust Non-Blocking Network Connection Watchdog:
   if (WiFi.status() != WL_CONNECTED) {
-    connectWifi();
+    if (now - lastWifiRetryMs >= 5000) {
+      lastWifiRetryMs = now;
+      connectWifi();
+    }
   } else if (!mqtt.connected()) {
-    connectMqtt();
+    if (now - lastMqttRetryMs >= 3000) {
+      lastMqttRetryMs = now;
+      connectMqtt();
+    }
   } else {
     mqtt.loop();
   }
